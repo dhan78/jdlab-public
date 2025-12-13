@@ -1,8 +1,8 @@
 export default function PageBackground() {
   return (
     <div className="fixed inset-0 -z-10 overflow-hidden">
-      {/* Base gradient background */}
-      <div className="absolute inset-0 bg-gradient-to-br from-white via-blue-50 to-teal-50"></div>
+      {/* Base gradient background - bright and clean */}
+      <div className="absolute inset-0 bg-gradient-to-br from-blue-50 via-white to-cyan-50"></div>
       
       {/* Dental lab theme elements */}
       

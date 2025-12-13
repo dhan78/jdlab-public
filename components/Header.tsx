@@ -2,29 +2,28 @@
 
 import Link from 'next/link'
 import { useState } from 'react'
+import Logo from './Logo'
 
 export default function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   return (
-    <header className="bg-dark text-white sticky top-0 z-50">
+    <header className="bg-white/70 backdrop-blur-md text-dark sticky top-0 z-50 shadow-sm">
       <nav className="container-wide flex items-center justify-between py-4 px-4">
-        <div className="flex items-center gap-2">
-          <div className="w-10 h-10 bg-gradient-to-br from-primary to-secondary rounded-lg flex items-center justify-center font-bold text-lg">
-            JD
-          </div>
+        <Link href="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+          <Logo className="w-24 h-" />
           <span className="font-bold text-xl hidden sm:inline">JD Dental Lab</span>
-        </div>
+        </Link>
 
         {/* Desktop Menu */}
         <div className="hidden md:flex items-center gap-8">
-          <Link href="#services" className="hover:text-secondary transition">
+          <Link href="#services" className="hover:text-primary transition">
             Services
           </Link>
-          <Link href="#automation" className="hover:text-secondary transition">
+          <Link href="#automation" className="hover:text-primary transition">
             Automation
           </Link>
-          <Link href="#global" className="hover:text-secondary transition">
+          <Link href="#global" className="hover:text-primary transition">
             Global Reach
           </Link>
           <Link href="#contact" className="btn-primary">
@@ -34,7 +33,7 @@ export default function Header() {
 
         {/* Mobile Menu Button */}
         <button
-          className="md:hidden text-white"
+          className="md:hidden text-dark"
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
         >
           <svg
@@ -55,25 +54,25 @@ export default function Header() {
 
       {/* Mobile Menu */}
       {mobileMenuOpen && (
-        <div className="md:hidden bg-dark border-t border-gray-700 px-4 py-4">
+        <div className="md:hidden bg-white/90 backdrop-blur-md border-t border-gray-200 px-4 py-4">
           <div className="flex flex-col gap-4">
             <Link
               href="#services"
-              className="hover:text-secondary transition"
+              className="text-dark hover:text-primary transition"
               onClick={() => setMobileMenuOpen(false)}
             >
               Services
             </Link>
             <Link
               href="#automation"
-              className="hover:text-secondary transition"
+              className="text-dark hover:text-primary transition"
               onClick={() => setMobileMenuOpen(false)}
             >
               Automation
             </Link>
             <Link
               href="#global"
-              className="hover:text-secondary transition"
+              className="text-dark hover:text-primary transition"
               onClick={() => setMobileMenuOpen(false)}
             >
               Global Reach

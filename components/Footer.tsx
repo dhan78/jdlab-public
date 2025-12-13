@@ -1,10 +1,15 @@
+import Logo from './Logo'
+
 export default function Footer() {
   return (
     <footer className="bg-dark text-white mt-20">
       <div className="container-wide section-padding">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
           <div>
-            <h3 className="font-bold text-lg mb-4">JD Dental Lab</h3>
+            <div className="flex items-center gap-3 mb-4">
+              <Logo className="w-10 h-10" />
+              <h3 className="font-bold text-lg">JD Dental Lab</h3>
+            </div>
             <p className="text-gray-400">Leading digital dental and medical devices lab serving the world.</p>
           </div>
           <div>
