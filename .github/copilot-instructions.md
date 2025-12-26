@@ -1,146 +1,89 @@
-# JD Dental Lab Website - AI Agent Instructions
+# JD Dental Lab - AI Coding Agent Instructions
 
 ## Project Overview
-Next.js 15 dental lab marketing website with TypeScript, Tailwind CSS, and API routes. Company: JD Dental Lab. Contact: info@jdlab.us, 551-226-9540.
+Next.js 15 marketing website for a digital dental/medical device lab. Single-page app with sections for services, workflow automation, global reach, and lead generation. All APIs are demo/stub implementations with in-memory storage.
 
 ## Architecture
 
 ### Component Structure
-- **Server Components (default)**: All components in `app/` unless using hooks/events
-- **Client Components (`'use client'`)**: Required for interactivity - forms, animations, event handlers
-  - Example: `Hero.tsx` uses client-side for scroll functionality and hydration-safe animations
-  - Example: `ContactForm.tsx` uses client-side for form state management
+- **Page Composition**: [app/page.tsx](../app/page.tsx) imports all section components, rendered sequentially on home page
+- **Components**: All in `/components`, no nesting. Each is self-contained with inline data
+- **Client Components**: Only `Hero.tsx` and `ContactForm.tsx` use `'use client'` for interactivity (scroll, forms)
+- **Server Components**: Default for all other components (Header, Services, Automation, GlobalReach, Footer)
 
-### Hydration Safety Pattern
-**Critical**: Prevent SSR/client mismatches when using animations or browser-dependent features:
-```tsx
-'use client'
-const [isClient, setIsClient] = useState(false)
-useEffect(() => setIsClient(true), [])
-// Render animations only when {isClient && <animated-elements>}
-```
-Always add `suppressHydrationWarning` to `<html>` and `<body>` in `layout.tsx` to handle browser extensions.
+### Styling Approach
+- **Tailwind-first**: All styling via utility classes, no CSS modules
+- **Custom utilities**: Defined in [app/globals.css](../app/globals.css) as `@layer components` (btn-primary, section-padding, container-wide)
+- **Color scheme**: Custom colors in [tailwind.config.ts](../tailwind.config.ts) - primary (#0066cc), secondary (#00a699), accent (#ff6b35)
+- **Animations**: Custom pulse animations with delay utilities for Hero background orbs
 
-### Custom Styling System
-**Color Palette** (in `tailwind.config.ts`):
-- `primary`: #0066cc (blue) - main brand color
-- `secondary`: #00a699 (teal) - accents
-- `accent`: #ff6b35 (orange) - highlights
-- `dark`: #1a1a1a, `light`: #f5f5f5
-
-**Reusable Classes** (in `app/globals.css` @layer components):
-- `.btn-primary` / `.btn-secondary` - styled buttons with hover states
-- `.section-padding` - consistent py-16 px-4 spacing
-- `.container-wide` - max-w-7xl mx-auto wrapper
-
-**Pattern**: Always use Tailwind utilities first, only create custom classes for repeated multi-utility patterns.
-
-## Key Sections & IDs
-
-Navigation anchors for smooth scrolling:
-- `#services` - Services.tsx
-- `#automation` - Automation.tsx  
-- `#global` - GlobalReach.tsx
-- `#contact` - ContactForm.tsx
-
-Scroll implementation: `document.getElementById('contact')?.scrollIntoView({ behavior: 'smooth' })`
-
-## API Routes Pattern
-
-Located in `app/api/[endpoint]/route.ts`. All use in-memory storage (demo only - flag for production DB migration):
-
-```typescript
-// POST handler signature
-export async function POST(request: NextRequest) {
-  const body = await request.json()
-  // Validation, processing
-  return NextResponse.json({ success: true }, { status: 201 })
-}
-
-// GET handler signature  
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url)
-  // Process query params
-  return NextResponse.json({ data })
-}
-```
-
-**Existing APIs**:
-- `/api/contact` - Contact form submissions (name, email, phone, service, message)
-- `/api/tracking` - Case tracking (caseId query param)
-- `/api/quote` - Quote generation (service, quantity, material, rush)
+### API Routes Pattern
+Located in `app/api/**/route.ts`. All follow this structure:
+- **POST**: Primary endpoint with validation, returns success/error JSON
+- **GET**: Demo listing endpoint (no auth, in-memory data only)
+- **Storage**: In-memory arrays/objects - NOT production-ready, reset on restart
+- **Examples**: `/api/contact`, `/api/tracking?caseId=X`, `/api/quote`
 
 ## Development Workflow
 
+### Commands
 ```bash
-# Install (always use npm, not pnpm despite README)
-npm install
-
-# Dev server (runs on port 3000)
-npm run dev
-
-# Production build
-npm run build
-npm start
-
-# Type checking only
-npm run type-check
+pnpm dev          # Dev server on :3000
+pnpm build        # Production build
+pnpm lint         # Next.js linting
+pnpm type-check   # TypeScript compilation check
 ```
 
-## Component Conventions
+### Path Aliases
+- `@/*` maps to workspace root (e.g., `@/components/Header`)
+- All imports use this alias, never relative paths from `app/`
 
-### File Structure
-- **Top-level components**: Export default function matching filename
-- **Sections**: Use `<section id="slug" className="section-padding">` wrapper
-- **Responsive**: Always include sm:, md:, lg: breakpoints for layouts
+### Hydration Strategy
+- Components using client-side DOM manipulation (like Hero scroll) use `useState`/`useEffect` pattern to avoid SSR/hydration mismatches
+- `suppressHydrationWarning` used in layout for client-side variations
 
-### Form Components
-Pattern from `ContactForm.tsx`:
-1. Use controlled components with local state
-2. Generic `handleChange` for all inputs: `const { name, value } = e.target`
-3. Loading states during async operations
-4. Success/error feedback with auto-dismiss timeout
-5. Clear form on success: `setFormData({ ...initialState })`
+## Component Patterns
 
-### Background Components
-- Fixed positioning: `fixed inset-0 -z-10` 
-- Dental lab theme: subtle SVG illustrations (3D printers, CAD/CAM, teeth) at 3-5% opacity
-- Gradient orbs: `blur-3xl` with primary/secondary colors at low opacity
-- Tech grid: `bg-[length:80px_80px]` pattern overlay at 2% opacity
+### Section Components
+All follow this structure:
+```tsx
+export default function SectionName() {
+  return (
+    <section id="section-id" className="section-padding bg-{color}">
+      <div className="container-wide">
+        {/* Title block centered */}
+        {/* Grid/flex content */}
+      </div>
+    </section>
+  )
+}
+```
 
-## Branding Guidelines
+### Data Co-location
+- Service cards, automation steps, global stats defined as const arrays inside component
+- No separate data files or external JSON
+- Icons use emoji characters, not icon libraries
 
-**Critical**: Company name is "JD Dental Lab" (never "Digital Dental Lab")
-- Logo: "JD" letters in gradient box
-- Tagline: "Global Innovation"
-- No use of "Laboratory" - always use "Lab"
+### Form Handling
+[ContactForm.tsx](../components/ContactForm.tsx) shows standard pattern:
+- Local state for form data + loading + submitted states
+- `fetch('/api/contact')` on submit
+- Validation in API, not client-side (except HTML5 required)
+- Success message with auto-dismiss timeout
 
-## Production TODOs
-Current demo limitations requiring upgrade:
-1. In-memory API storage → database (PostgreSQL/MongoDB)
-2. No email notifications → SendGrid/AWS SES integration
-3. No authentication/rate limiting on APIs
-4. Contact info hardcoded → environment variables
-5. No analytics integration
+## TypeScript Conventions
 
-## Common Modifications
+- Interfaces for API request/response shapes defined in route files
+- Strict mode enabled (`strict: true` in tsconfig)
+- `NextRequest`/`NextResponse` for API routes
+- Type imports with `type` keyword: `import type { Metadata }`
 
-**Update contact info**: `components/ContactForm.tsx` + `components/Footer.tsx` + `README.md`
+## Metadata & SEO
+[app/layout.tsx](../app/layout.tsx) contains all metadata - title, description, keywords, favicons. Update here for SEO changes.
 
-**Add new service**: Update `components/Services.tsx` services array with icon, title, description
-
-**Change colors**: Modify `tailwind.config.ts` theme.extend.colors, update button hover states in `globals.css`
-
-**Add API endpoint**: Create `app/api/[name]/route.ts`, follow NextRequest/NextResponse pattern
-
-## TypeScript Patterns
-- Interface types for API request/response bodies
-- React.FormEvent for form handlers
-- React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement> for input handlers
-- Explicit return types for API handlers: `Promise<NextResponse>`
-
-## Performance Notes
-- Server components by default = faster initial load
-- Animations hydrated client-side only to prevent SSR mismatch
-- Fixed background layers prevent repaints during scroll
-- Lazy gradient orbs load after hydration in Hero component
+## What NOT to Do
+- Don't add state management libraries (no need, forms are simple)
+- Don't create API auth/DB layers (demo APIs intentional)
+- Don't add CSS files beyond globals.css
+- Don't split components into subdirectories
+- Don't use `<Link>` for in-page navigation (smooth scroll in Hero shows pattern)

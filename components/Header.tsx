@@ -26,6 +26,9 @@ export default function Header() {
           <Link href="#global" className="hover:text-primary transition">
             Global Reach
           </Link>
+          <Link href="#resources" className="hover:text-primary transition">
+            Resources
+          </Link>
           <Link href="#contact" className="btn-primary">
             Get Started
           </Link>
@@ -76,6 +79,13 @@ export default function Header() {
               onClick={() => setMobileMenuOpen(false)}
             >
               Global Reach
+            </Link>
+            <Link
+              href="#resources"
+              className="text-dark hover:text-primary transition"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              Resources
             </Link>
             <button className="btn-primary justify-center">Get Started</button>
           </div>
