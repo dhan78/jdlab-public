@@ -17,19 +17,19 @@ export default function Header() {
 
         {/* Desktop Menu */}
         <div className="hidden md:flex items-center gap-8">
-          <Link href="#services" className="hover:text-primary transition">
+          <Link href="/#services" className="hover:text-primary transition">
             Services
           </Link>
-          <Link href="#automation" className="hover:text-primary transition">
+          <Link href="/#automation" className="hover:text-primary transition">
             Automation
           </Link>
-          <Link href="#global" className="hover:text-primary transition">
+          <Link href="/#global" className="hover:text-primary transition">
             Global Reach
           </Link>
-          <Link href="#resources" className="hover:text-primary transition">
+          <Link href="/#resources" className="hover:text-primary transition">
             Resources
           </Link>
-          <Link href="#contact" className="btn-primary">
+          <Link href="/#contact" className="btn-primary">
             Get Started
           </Link>
         </div>
@@ -60,34 +60,36 @@ export default function Header() {
         <div className="md:hidden bg-white/90 backdrop-blur-md border-t border-gray-200 px-4 py-4">
           <div className="flex flex-col gap-4">
             <Link
-              href="#services"
+              href="/#services"
               className="text-dark hover:text-primary transition"
               onClick={() => setMobileMenuOpen(false)}
             >
               Services
             </Link>
             <Link
-              href="#automation"
+              href="/#automation"
               className="text-dark hover:text-primary transition"
               onClick={() => setMobileMenuOpen(false)}
             >
               Automation
             </Link>
             <Link
-              href="#global"
+              href="/#global"
               className="text-dark hover:text-primary transition"
               onClick={() => setMobileMenuOpen(false)}
             >
               Global Reach
             </Link>
             <Link
-              href="#resources"
+              href="/#resources"
               className="text-dark hover:text-primary transition"
               onClick={() => setMobileMenuOpen(false)}
             >
               Resources
             </Link>
-            <button className="btn-primary justify-center">Get Started</button>
+            <Link href="/#contact" className="btn-primary justify-center">
+              Get Started
+            </Link>
           </div>
         </div>
       )}
