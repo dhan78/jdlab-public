@@ -15,17 +15,17 @@ export default function Resources() {
       color: 'bg-cyan-50 hover:bg-cyan-100 border-cyan-200'
     },
     {
+      emoji: '�',
+      title: 'IOS Scanner Leasing',
+      description: 'Digitize your workflow with our scanner leasing program—no capital expense',
+      href: '/ios-leasing',
+      color: 'bg-purple-50 hover:bg-purple-100 border-purple-200'
+    },
+    {
       emoji: '📄',
       title: 'Articles',
       description: 'Industry insights, case studies, and technical documentation',
       href: '/articles',
-      color: 'bg-white hover:bg-gray-50 border-gray-200'
-    },
-    {
-      emoji: '🔬',
-      title: 'IOS Guidance & Techniques',
-      description: 'Best practices for intraoral scanning and digital workflows',
-      href: '/ios-guidance',
       color: 'bg-white hover:bg-gray-50 border-gray-200'
     },
     {
