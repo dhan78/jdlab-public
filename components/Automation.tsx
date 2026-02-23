@@ -33,7 +33,7 @@ export default function Automation() {
   ]
 
   return (
-    <section id="automation" className="section-padding bg-white">
+    <section id="automation" className="section-padding bg-white scroll-mt-20">
       <div className="container-wide">
         <div className="text-center mb-16">
           <h2 className="text-4xl font-bold mb-4">Workflow Automation</h2>

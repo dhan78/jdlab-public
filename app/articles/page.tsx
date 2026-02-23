@@ -102,8 +102,21 @@ export default function ArticlesPage() {
       <section className="section-padding bg-white">
         <div className="container-wide">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {articles.map((article, index) => (
-              <article key={index} className="bg-light rounded-lg overflow-hidden hover:shadow-xl transition-shadow">
+            {articles.map((article, index) => {
+              const articleLinks = [
+                '/articles/digital-dentistry-future',
+                '/articles/crown-bridge-margins',
+                '/articles/implant-planning',
+                '/articles/lab-communication',
+                '/articles/medical-devices',
+                '/articles/material-selection',
+                '/articles/full-arch-workflow',
+                '/articles/turnaround-time',
+                '/articles/scanning-errors'
+              ]
+              const href = articleLinks[index] || '#'
+              return (
+              <Link key={index} href={href} className="block bg-light rounded-lg overflow-hidden hover:shadow-xl transition-shadow cursor-pointer">
                 <div className="p-6">
                   <div className="flex items-center gap-3 mb-4">
                     <span className="text-4xl">{article.emoji}</span>
@@ -125,31 +138,13 @@ export default function ArticlesPage() {
                     <span>{article.readTime}</span>
                   </div>
                   
-                  {(() => {
-                    const articleLinks = [
-                      '/articles/digital-dentistry-future',
-                      '/articles/crown-bridge-margins',
-                      '/articles/implant-planning',
-                      '/articles/lab-communication',
-                      '/articles/medical-devices',
-                      '/articles/material-selection',
-                      '/articles/full-arch-workflow',
-                      '/articles/turnaround-time',
-                      '/articles/scanning-errors'
-                    ]
-                    return articleLinks[index] ? (
-                      <Link href={articleLinks[index]} className="text-primary font-semibold hover:text-blue-700 transition-colors">
-                        Read Article →
-                      </Link>
-                    ) : (
-                      <button className="text-primary font-semibold hover:text-blue-700 transition-colors">
-                        Read Article →
-                      </button>
-                    )
-                  })()}
+                  <span className="text-primary font-semibold hover:text-blue-700 transition-colors">
+                    Read Article →
+                  </span>
                 </div>
-              </article>
-            ))}
+              </Link>
+              )
+            })}
           </div>
         </div>
       </section>

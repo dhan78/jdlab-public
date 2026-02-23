@@ -45,7 +45,7 @@ export default function Resources() {
   ]
 
   return (
-    <section id="resources" className="section-padding bg-light">
+    <section id="resources" className="section-padding bg-light scroll-mt-20">
       <div className="container-wide">
         <div className="text-center mb-12">
           <h2 className="text-4xl font-bold mb-4">Resources & Tools</h2>

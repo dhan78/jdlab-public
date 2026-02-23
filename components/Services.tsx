@@ -33,7 +33,7 @@ export default function Services() {
   ]
 
   return (
-    <section id="services" className="section-padding bg-light">
+    <section id="services" className="section-padding bg-light scroll-mt-20">
       <div className="container-wide">
         <div className="text-center mb-16">
           <h2 className="text-4xl font-bold mb-4">Our Services</h2>

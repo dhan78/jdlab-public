@@ -50,7 +50,10 @@ export default function Hero() {
           automated workflows, and worldwide reach. Deliver excellence to patients globally.
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <button className="btn-primary hover:scale-105 transition-transform shadow-lg">
+          <button
+            onClick={() => document.getElementById('services')?.scrollIntoView({ behavior: 'smooth' })}
+            className="btn-primary hover:scale-105 transition-transform shadow-lg"
+          >
             Explore Services
           </button>
           <button 
