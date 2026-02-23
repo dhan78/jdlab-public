@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Image from 'next/image'
+import HeroCoverflow from './HeroCoverflow'
 
 export default function Hero() {
   const [isClient, setIsClient] = useState(false)
@@ -18,25 +20,21 @@ export default function Hero() {
 
   return (
     <section className="relative w-full min-h-screen flex items-center justify-center overflow-hidden">
-      {/* Modern Background with Animated Elements */}
+      {/* Background Image */}
       <div className="absolute inset-0 z-0">
-        {/* Base gradient background - bright and clean */}
-        <div className="absolute inset-0 bg-gradient-to-br from-blue-50 via-cyan-50 to-white"></div>
+        <Image
+          src="/images/JDLab_background.png"
+          alt="Dental lab background with robotic arm and tooth model"
+          fill
+          className="object-cover"
+          priority
+          quality={85}
+        />
+        {/* White overlay for text readability */}
+        <div className="absolute inset-0 bg-white/75"></div>
         
-        {/* Animated gradient orbs - only render on client */}
-        {isClient && (
-          <>
-            <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/15 rounded-full blur-3xl animate-pulse"></div>
-            <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-secondary/15 rounded-full blur-3xl animate-pulse animation-delay-2000"></div>
-            <div className="absolute top-1/2 right-0 w-96 h-96 bg-accent/8 rounded-full blur-3xl animate-pulse animation-delay-4000"></div>
-          </>
-        )}
-        
-        {/* Tech pattern overlay - subtle grid */}
-        <div className="absolute inset-0 opacity-[0.03] bg-[linear-gradient(0deg,transparent_24%,rgba(0,102,204,.08)_25%,rgba(0,102,204,.08)_26%,transparent_27%,transparent_74%,rgba(0,102,204,.08)_75%,rgba(0,102,204,.08)_76%,transparent_77%,transparent),linear-gradient(90deg,transparent_24%,rgba(0,102,204,.08)_25%,rgba(0,102,204,.08)_26%,transparent_27%,transparent_74%,rgba(0,102,204,.08)_75%,rgba(0,102,204,.08)_76%,transparent_77%,transparent)] bg-[length:50px_50px]"></div>
-        
-        {/* Radial gradient from center */}
-        <div className="absolute inset-0 bg-radial-gradient" style={{backgroundImage: 'radial-gradient(circle at 50% 50%, rgba(0, 102, 204, 0.08), transparent 70%)'}}></div>
+        {/* Subtle gradient overlay for depth */}
+        <div className="absolute inset-0 bg-gradient-to-b from-white/40 via-transparent to-white/60"></div>
       </div>
 
       {/* Content */}
@@ -62,6 +60,13 @@ export default function Hero() {
             Request Demo
           </button>
         </div>
+
+        {/* Coverflow Gallery */}
+        {isClient && (
+          <div className="mt-12 sm:mt-16">
+            <HeroCoverflow />
+          </div>
+        )}
       </div>
     </section>
   )
