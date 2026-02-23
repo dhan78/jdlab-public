@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "JD Dental Lab - Modern website for digital dental and medical devices with global reach and workflow automation",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
