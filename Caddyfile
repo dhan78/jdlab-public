@@ -1,0 +1,7 @@
+jdlab.us {
+	reverse_proxy nextjs:3000
+}
+
+www.jdlab.us {
+	redir https://jdlab.us{uri} permanent
+}

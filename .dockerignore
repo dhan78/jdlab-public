@@ -7,3 +7,5 @@ LICENSE
 .env*
 *.md
 .DS_Store
+Caddyfile
+docker-compose.yml
