@@ -9,9 +9,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
-        reservations:
           memory: 256m
+        reservations:
+          memory: 128m
 
   caddy:
     image: caddy:2-alpine
@@ -21,7 +21,7 @@ services:
       - "443:443"
       - "443:443/udp"   # HTTP/3
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro,z
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
