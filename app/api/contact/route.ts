@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { sendContactNotification } from '@/lib/email'
 
 interface ContactRequest {
   name: string
@@ -32,28 +33,32 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Store the contact request
-    contactRequests.push({
-      ...body,
+    const sanitized = {
       name: body.name.trim(),
       email: body.email.trim(),
+      phone: body.phone?.trim(),
       service: body.service.trim(),
-      message: body.message.trim()
-    })
+      message: body.message.trim(),
+    }
 
-    console.log('New contact request received:', body)
+    // Store the contact request
+    contactRequests.push(sanitized)
 
-    // In production, you would:
-    // 1. Save to database
-    // 2. Send confirmation email
-    // 3. Notify team
-    // 4. Integrate with CRM
+    const requestId = `REQ-${Date.now()}`
+
+    // Send email notifications (team + customer confirmation)
+    try {
+      await sendContactNotification({ ...sanitized, requestId })
+    } catch (emailError) {
+      console.error('Failed to send email notification:', emailError)
+      // Don't fail the request if email fails — the submission is still recorded
+    }
 
     return NextResponse.json(
       {
         success: true,
         message: 'Thank you for your inquiry. We will be in touch soon.',
-        requestId: `REQ-${Date.now()}`
+        requestId,
       },
       { status: 201 }
     )
