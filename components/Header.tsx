@@ -32,6 +32,16 @@ export default function Header() {
           <Link href="/#contact" className="btn-primary">
             Get Started
           </Link>
+          <Link
+            href="/portal/login"
+            className="flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-primary border border-gray-300 hover:border-primary rounded-lg px-3 py-1.5 transition-colors"
+            title="Doctor Portal"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+            <span>Doctor Login</span>
+          </Link>
         </div>
 
         {/* Mobile Menu Button */}
@@ -89,6 +99,16 @@ export default function Header() {
             </Link>
             <Link href="/#contact" className="btn-primary justify-center">
               Get Started
+            </Link>
+            <Link
+              href="/portal/login"
+              className="flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-primary border border-gray-300 hover:border-primary rounded-lg px-4 py-2 transition-colors"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+              Doctor Login
             </Link>
           </div>
         </div>

@@ -1,22 +1,36 @@
 <!--
   Sync Impact Report
   ==================
-  Version change: 1.0.0 → 1.1.0 (MINOR — new section added)
-  Modified principles: none
-  Modified sections:
-    - Technology Stack Constraints: expanded Deployment bullet with
-      cross-repo detail and container specifics
-    - Development Workflow: clarified local vs production distinction
-  Added sections:
-    - Deployment Architecture (new section between Tech Stack and
-      Development Workflow)
+  Version change: 1.1.0 → 2.0.0 (MAJOR — new mandatory principles added)
+
+  Modified principles:
+    - V. Server-Side Validation → V. Input Validation & Sanitization
+      (expanded to mandate HTML-escape of user input in email
+      templates, field-length limits, and type-checked runtime
+      validation on API payloads)
+
+  Added principles:
+    - VII. Accessibility (a11y) Baseline — WCAG 2.1 AA compliance,
+      semantic landmarks, ARIA attributes, keyboard navigation
+    - VIII. SEO & Social Metadata — Open Graph, Twitter Card,
+      canonical URL, structured data (JSON-LD)
+    - IX. Security Hardening — rate limiting, no PII exposure on
+      GET endpoints, Content-Security-Policy headers, XSS
+      prevention in server-generated HTML
+
+  Added sections: none (principles added within Core Principles)
   Removed sections: none
+
   Templates requiring updates:
     - .specify/templates/plan-template.md ✅ no changes needed
-      (Constitution Check section references constitution dynamically)
+      (Constitution Check references constitution dynamically)
     - .specify/templates/spec-template.md ✅ no changes needed
     - .specify/templates/tasks-template.md ✅ no changes needed
-  Follow-up TODOs: none
+
+  Follow-up TODOs:
+    - Implement fixes for audit findings (see summary below)
+    - Existing code has violations against the new principles;
+      a remediation pass is required.
 -->
 
 # JD Dental Lab Constitution
@@ -84,11 +98,21 @@ and simplify reasoning about data flow.
 **Rationale**: Co-location keeps related code together, reduces
 indirection, and makes components self-contained.
 
-### V. Server-Side Validation
+### V. Input Validation & Sanitization
 
 - All input validation MUST happen in API route POST handlers.
 - Required-field and format checks (email regex, trimming) MUST
   be performed server-side before processing.
+- Field-length limits MUST be enforced (e.g., name ≤ 200
+  characters, message ≤ 5 000 characters) to prevent oversized
+  payloads and email bodies.
+- Numeric fields (quantity, price) MUST be validated as the
+  correct type and range at runtime (not just via TypeScript
+  interfaces, which are erased at build time).
+- User-supplied values interpolated into HTML (e.g., email
+  templates) MUST be escaped to prevent XSS. Use a dedicated
+  escape helper; never use raw template-literal interpolation for
+  untrusted data in HTML contexts.
 - Client-side validation is limited to HTML5 `required` attributes.
 - API responses MUST return structured JSON with appropriate HTTP
   status codes (201 for creation, 400 for bad input, 500 for
@@ -96,6 +120,8 @@ indirection, and makes components self-contained.
 
 **Rationale**: Server-side validation is the authoritative gate;
 client hints are a UX convenience, not a security boundary.
+Template-literal injection in HTML emails is a real XSS vector in
+some email clients and MUST be defended against.
 
 ### VI. Flat Architecture
 
@@ -111,7 +137,77 @@ client hints are a UX convenience, not a security boundary.
 **Rationale**: Flat structure matches the single-page scope and
 keeps navigation trivial for contributors.
 
-## Technology Stack Constraints
+### VII. Accessibility (a11y) Baseline
+
+All pages MUST meet WCAG 2.1 Level AA. Specifically:
+
+- Every page MUST contain exactly one `<main>` landmark wrapping
+  the primary content region.
+- Interactive elements (`<button>`, `<a>`, custom controls) MUST
+  have accessible names — via visible text, `aria-label`, or
+  `aria-labelledby`.
+- Toggles (e.g., mobile menu hamburger) MUST expose
+  `aria-expanded` reflecting their open/closed state.
+- Buttons that do not submit forms MUST have `type="button"`.
+- Emoji used as meaningful content MUST be wrapped in a
+  `<span role="img" aria-label="description">` or equivalent.
+- Form status changes (success, error, loading) MUST be announced
+  to assistive technology via `role="alert"`, `aria-live`, or
+  `aria-busy` as appropriate.
+- All interactive elements MUST be keyboard-reachable (`tabIndex`,
+  `onKeyDown`) and have visible focus indicators.
+- Form inputs MUST have associated `<label>` elements (already
+  followed — MUST remain enforced).
+
+**Rationale**: Accessibility is a legal requirement in many
+jurisdictions and a core quality signal. A marketing site that
+cannot be navigated by keyboard or screen reader excludes a
+significant portion of potential customers.
+
+### VIII. SEO & Social Metadata
+
+- `app/layout.tsx` MUST export Next.js `metadata` including at
+  minimum: `title`, `description`, `keywords`, `openGraph`
+  (`title`, `description`, `url`, `siteName`, `images`, `type`),
+  and `twitter` (`card`, `title`, `description`, `images`).
+- A canonical URL MUST be set via `metadata.alternates.canonical`.
+- Structured data (JSON-LD) for `Organization` or `LocalBusiness`
+  SHOULD be included in `layout.tsx` or `page.tsx` for rich
+  search results.
+- Heading hierarchy MUST NOT skip levels (h1 → h2 → h3).
+- Dynamic content (copyright year, dates) MUST NOT be hardcoded;
+  derive from `new Date().getFullYear()` or equivalent.
+
+**Rationale**: The site exists to attract leads via search and
+social sharing. Missing Open Graph tags produce blank previews on
+LinkedIn, Facebook, and messaging apps — directly reducing
+inbound traffic.
+
+### IX. Security Hardening
+
+- API GET endpoints MUST NOT expose personally identifiable
+  information (PII) such as emails, phone numbers, or messages
+  without authentication. Demo listing endpoints MUST return
+  aggregate counts only, or be removed.
+- API POST endpoints SHOULD implement rate limiting (e.g., via
+  an in-memory counter or middleware) to prevent spam and quota
+  exhaustion on external services (Azure Graph API).
+- Security headers MUST be configured in `next.config.ts`
+  (`headers()` function) or Caddy: `Content-Security-Policy`,
+  `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: SAMEORIGIN`,
+  `Referrer-Policy: strict-origin-when-cross-origin`.
+- Environment variables for secrets MUST be validated at startup
+  with a clear error message; non-null assertions (`!`) on
+  `process.env` MUST be replaced with an explicit check or
+  default.
+- Unused production dependencies MUST be removed from
+  `package.json` (e.g., `axios` is currently unused).
+
+**Rationale**: Even a demo/marketing site handles real user data
+via the contact form. Exposing PII on unauthenticated endpoints
+and allowing unlimited submissions are exploitable weaknesses
+that erode trust.
 
 - **Framework**: Next.js 15 (App Router), React 19, TypeScript
   (strict mode).
@@ -236,4 +332,4 @@ ad-hoc conventions when conflicts arise.
   a Constitution Check gate verifying alignment with these
   principles before implementation begins.
 
-**Version**: 1.1.0 | **Ratified**: 2026-03-28 | **Last Amended**: 2026-03-28
+**Version**: 2.0.0 | **Ratified**: 2026-03-28 | **Last Amended**: 2026-03-28
