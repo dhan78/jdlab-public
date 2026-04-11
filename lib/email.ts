@@ -47,6 +47,42 @@ async function sendMail(to: string, subject: string, htmlBody: string, replyTo?:
   await client.api(`/users/${SENDER}/sendMail`).post({ message })
 }
 
+interface PasswordResetEmailParams {
+  name: string
+  email: string
+  token: string
+}
+
+export async function sendPasswordResetEmail({ name, email, token }: PasswordResetEmailParams) {
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? 'https://jdlab.us'
+  const resetUrl = `${baseUrl}/portal/reset-password?token=${encodeURIComponent(token)}`
+
+  // Escape user-supplied values before interpolation
+  const safeName = name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  const safeEmail = email.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+  await sendMail(
+    email,
+    'Reset your JD Lab Portal password',
+    `
+      <div style="font-family:sans-serif;max-width:600px;margin:0 auto;">
+        <h2 style="color:#0066cc;">Password Reset Request</h2>
+        <p>Hello ${safeName},</p>
+        <p>We received a request to reset the password for <strong>${safeEmail}</strong>.</p>
+        <p>Click the button below to set a new password. This link expires in <strong>1 hour</strong>.</p>
+        <p style="margin:32px 0;">
+          <a href="${resetUrl}" style="background:#0066cc;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">
+            Reset Password
+          </a>
+        </p>
+        <p style="color:#666;font-size:14px;">If you did not request a password reset, you can safely ignore this email.</p>
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;" />
+        <p style="color:#666;font-size:14px;">JD Dental Lab &mdash; Precision Digital Dentistry</p>
+      </div>
+    `,
+  )
+}
+
 export async function sendContactNotification(params: ContactEmailParams) {
   const { name, email, phone, service, message, requestId } = params
 

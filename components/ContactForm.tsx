@@ -2,10 +2,15 @@
 
 import { useState } from 'react'
 
-export default function ContactForm() {
+interface ContactFormProps {
+  initialName?: string
+  initialEmail?: string
+}
+
+export default function ContactForm({ initialName = '', initialEmail = '' }: ContactFormProps = {}) {
   const [formData, setFormData] = useState({
-    name: '',
-    email: '',
+    name: initialName,
+    email: initialEmail,
     phone: '',
     service: '',
     message: ''
