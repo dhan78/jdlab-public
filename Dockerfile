@@ -1,5 +1,8 @@
 FROM node:22-alpine AS base
 
+# 1. Force pnpm to natively allow sharp's build script globally across all stages
+ENV PNPM_ONLY_BUILT_DEPENDENCIES=sharp
+
 # Install pnpm
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
@@ -7,14 +10,13 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
-# --- Dependencies ---
 # --- Dependencies Stage ---
 FROM base AS deps
-COPY package.json ./
-# Use native npm to install dependencies—it runs sharp's build scripts automatically
-RUN npm install
+# Copy both files so pnpm can track frozen dependencies correctly
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
-# --- Build ---
+# --- Build Stage ---
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
