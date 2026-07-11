@@ -22,7 +22,7 @@ jobs:
     - name: Install pnpm
       uses: pnpm/action-setup@v4
       with:
-        version: 9  # Matches your project's pnpm setup
+        version: 11  # Matches your project's true pnpm v11 setup
 
     - name: Set up Node.js
       uses: actions/setup-node@v4
@@ -36,9 +36,8 @@ jobs:
     - name: Build Next.js Application
       run: pnpm build
       env:
-        # Passes validation during compilation. 
-        # Your real production secret will still be safely loaded on EC2 at runtime.
-        PORTAL_JWT_SECRET: "placeholder-secret-for-github-actions-build"
+        # Pulls the secret from your GitHub Repository Settings for local verification
+        PORTAL_JWT_SECRET: ${{ secrets.PORTAL_JWT_SECRET }}
 
 
   # 2. CD Job: Build Docker Image and Publish to GitHub Container Registry (GHCR)
@@ -76,3 +75,6 @@ jobs:
         push: true
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
+        # Securely injects your real secret into your multi-stage Dockerfile ARG step
+        build-args: |
+          PORTAL_JWT_SECRET=${{ secrets.PORTAL_JWT_SECRET }}
