@@ -10,7 +10,7 @@ WORKDIR /app
 # --- Dependencies ---
 FROM base AS deps
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --no-frozen-lockfile --only-built-dependencies=sharp
+RUN pnpm install --no-frozen-lockfile --ignore-scripts=false
 
 # --- Build ---
 FROM base AS builder
