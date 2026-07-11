@@ -61,11 +61,12 @@ jobs:
         TODAY=$(date +'%Y%m%d')
         
         # Use the GitHub CLI to count successful runs created today
+        # FIX: Changed --json id to --json databaseId to match latest GitHub CLI schema
         RUNS_TODAY=$(gh run list \
           --workflow="${{ github.workflow }}" \
           --created="$(date +'%Y-%m-%d')" \
           --status=success \
-          --json id \
+          --json databaseId \
           --jq '. | length')
         
         # Add 1 to represent the current incremental run number
@@ -122,7 +123,6 @@ jobs:
   prune-old-images:
     needs: build-and-push-docker
     runs-on: ubuntu-latest
-    # Only triggers prune on main branch updates or manual runs to protect feature branch caches
     if: |
       github.ref == 'refs/heads/main' && 
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
@@ -131,10 +131,7 @@ jobs:
     - name: Purge Untagged and Stale Images
       uses: actions/delete-package-versions@v5
       with:
-        # Dynamically targets the package matching your repo name
         package-name: ${{ github.event.repository.name }}
         package-type: 'container'
-        # Ensures your 5 most recent container builds are preserved permanently
         min-versions-to-keep: 5
-        # Automatically purges orphaned manifests created by moving the 'latest' tag
         ignore-versions: '^(latest)$'
