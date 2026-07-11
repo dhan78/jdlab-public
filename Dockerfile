@@ -8,9 +8,11 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
 
 # --- Dependencies ---
+# --- Dependencies Stage ---
 FROM base AS deps
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --no-frozen-lockfile --ignore-scripts=false
+COPY package.json ./
+# Use native npm to install dependencies—it runs sharp's build scripts automatically
+RUN npm install
 
 # --- Build ---
 FROM base AS builder
