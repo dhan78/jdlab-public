@@ -32,6 +32,5 @@
 "pnpm": {
     "onlyBuiltDependencies": [
       "sharp"
-    ],
-    "ignoredBuiltDependencies": []
+    ]
   }}

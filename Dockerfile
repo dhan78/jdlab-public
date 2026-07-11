@@ -8,10 +8,10 @@ WORKDIR /app
 
 # --- Dependencies Stage ---
 FROM base AS deps
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
 # Strong fix for sharp in GitHub Actions
-RUN pnpm install --frozen-lockfile --ignore-scripts=false --config.onlyBuiltDependencies=sharp
+RUN pnpm install --frozen-lockfile
 
 # --- Build Stage ---
 FROM base AS builder
