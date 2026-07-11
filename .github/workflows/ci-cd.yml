@@ -35,6 +35,11 @@ jobs:
 
     - name: Build Next.js Application
       run: pnpm build
+      env:
+        # Passes validation during compilation. 
+        # Your real production secret will still be safely loaded on EC2 at runtime.
+        PORTAL_JWT_SECRET: "placeholder-secret-for-github-actions-build"
+
 
   # 2. CD Job: Build Docker Image and Publish to GitHub Container Registry (GHCR)
   build-and-push-docker:
