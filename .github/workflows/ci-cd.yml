@@ -5,7 +5,8 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-
+  workflow_dispatch:
+  
 # Grant permissions required to publish to GitHub Packages
 permissions:
   contents: read
