@@ -1,8 +1,5 @@
 FROM node:22-alpine AS base
 
-# 1. Force pnpm to natively allow sharp's build script globally across all stages
-ENV PNPM_ONLY_BUILT_DEPENDENCIES=sharp
-
 # Install pnpm
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
@@ -12,8 +9,8 @@ WORKDIR /app
 
 # --- Dependencies Stage ---
 FROM base AS deps
-# Copy both files so pnpm can track frozen dependencies correctly
 COPY package.json pnpm-lock.yaml ./
+# Standard clean install - it will read the permissions straight from package.json
 RUN pnpm install --frozen-lockfile
 
 # --- Build Stage ---
