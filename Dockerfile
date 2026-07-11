@@ -1,6 +1,5 @@
 FROM node:22-alpine AS base
 
-# Install pnpm
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable && corepack prepare pnpm@latest --activate
@@ -11,8 +10,8 @@ WORKDIR /app
 FROM base AS deps
 COPY package.json pnpm-lock.yaml ./
 
-# Critical fix for sharp in CI/CD
-RUN pnpm install --frozen-lockfile --ignore-scripts=false
+# Strong fix for sharp in GitHub Actions
+RUN pnpm install --frozen-lockfile --ignore-scripts=false --config.onlyBuiltDependencies=sharp
 
 # --- Build Stage ---
 FROM base AS builder
@@ -35,11 +34,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# Create non-root user
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-# Copy necessary files
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
