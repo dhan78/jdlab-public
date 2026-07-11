@@ -5,12 +5,13 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-  workflow_dispatch: # Enables the manual run button in the UI
+  workflow_dispatch: # Enables manual triggering
 
-# Grant permissions required to publish to GitHub Packages
+# Grant permissions required to publish packages and manage package lifecycle history
 permissions:
   contents: read
-  packages: write
+  packages: write  # Critical: Grants permission to delete older container images
+  actions: read    # Required to query past workflow runs via the API
 
 jobs:
   # 1. CI Job: Lint, Build, and Validate the Next.js app locally
@@ -23,7 +24,7 @@ jobs:
     - name: Install pnpm
       uses: pnpm/action-setup@v4
       with:
-        version: 11  # Matches your project's true pnpm v11 setup
+        version: 11
 
     - name: Set up Node.js
       uses: actions/setup-node@v4
@@ -37,7 +38,6 @@ jobs:
     - name: Build Next.js Application
       run: pnpm build
       env:
-        # Pulls the secret from your GitHub Repository Settings for local verification
         PORTAL_JWT_SECRET: ${{ secrets.PORTAL_JWT_SECRET }}
 
 
@@ -45,21 +45,57 @@ jobs:
   build-and-push-docker:
     needs: validate-and-test
     runs-on: ubuntu-latest
-    # FIX: Allows the job to run on direct pushes OR manual workflow dispatches on the main branch
     if: |
-      github.ref == 'refs/heads/main' && 
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      github.ref == 'refs/heads/main' || 
+      github.event_name == 'workflow_dispatch' || 
+      github.event_name == 'pull_request'
 
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
+
+    - name: Generate Custom Dynamic Tag
+      id: calver
+      run: |
+        # Get today's date in YYYYMMDD format
+        TODAY=$(date +'%Y%m%d')
+        
+        # Use the GitHub CLI to count successful runs created today
+        RUNS_TODAY=$(gh run list \
+          --workflow="${{ github.workflow }}" \
+          --created="$(date +'%Y-%m-%d')" \
+          --status=success \
+          --json id \
+          --jq '. | length')
+        
+        # Add 1 to represent the current incremental run number
+        N=$((RUNS_TODAY + 1))
+        
+        # Extract the branch name cleanly based on the trigger type
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          RAW_BRANCH="${{ github.head_ref }}"
+        else
+          RAW_BRANCH="${{ github.ref_name }}"
+        fi
+        
+        # Replace forward slashes with hyphens so the tag is legal in Docker
+        CLEAN_BRANCH=$(echo "$RAW_BRANCH" | sed 's/\//-/g')
+        
+        # Formats layout cleanly to branch-YYYYMMDD.n (e.g., main-20260711.2)
+        BUILD_TAG="${CLEAN_BRANCH}-${TODAY}.${N}"
+        echo "Generated custom release tag: ${BUILD_TAG}"
+        
+        # Save it into the step output variable
+        echo "tag=${BUILD_TAG}" >> $GITHUB_OUTPUT
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }} # Automatically provided by GitHub Actions
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Extract Metadata for Docker (Tags/Labels)
       id: meta
@@ -68,7 +104,7 @@ jobs:
         images: ghcr.io/${{ github.repository }}
         tags: |
           type=raw,value=latest
-          type=sha,format=short
+          type=raw,value=${{ steps.calver.outputs.tag }}
 
     - name: Build and Push Docker Image
       uses: docker/build-push-action@v6
@@ -78,6 +114,27 @@ jobs:
         push: true
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
-        # Securely injects your real secret into your multi-stage Dockerfile ARG step
         build-args: |
           PORTAL_JWT_SECRET=${{ secrets.PORTAL_JWT_SECRET }}
+
+
+  # 3. Cleanup Job: Prune older container images to save storage space
+  prune-old-images:
+    needs: build-and-push-docker
+    runs-on: ubuntu-latest
+    # Only triggers prune on main branch updates or manual runs to protect feature branch caches
+    if: |
+      github.ref == 'refs/heads/main' && 
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+
+    steps:
+    - name: Purge Untagged and Stale Images
+      uses: actions/delete-package-versions@v5
+      with:
+        # Dynamically targets the package matching your repo name
+        package-name: ${{ github.event.repository.name }}
+        package-type: 'container'
+        # Ensures your 5 most recent container builds are preserved permanently
+        min-versions-to-keep: 5
+        # Automatically purges orphaned manifests created by moving the 'latest' tag
+        ignore-versions: '^(latest)$'
