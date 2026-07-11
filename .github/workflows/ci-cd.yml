@@ -5,8 +5,8 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-  workflow_dispatch:
-  
+  workflow_dispatch: # Enables the manual run button in the UI
+
 # Grant permissions required to publish to GitHub Packages
 permissions:
   contents: read
@@ -45,8 +45,10 @@ jobs:
   build-and-push-docker:
     needs: validate-and-test
     runs-on: ubuntu-latest
-    # Only deploy when code is pushed directly to the main branch
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # FIX: Allows the job to run on direct pushes OR manual workflow dispatches on the main branch
+    if: |
+      github.ref == 'refs/heads/main' && 
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
 
     steps:
     - name: Checkout Code
