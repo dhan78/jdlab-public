@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { findDoctorByEmail } from '@/lib/portal-store'
 import { verifyPassword, createSessionToken } from '@/lib/portal-auth'
+import { recordAudit } from '@/lib/audit'
 
 // In-memory rate limiter: 5 attempts per IP per minute
 const loginAttempts = new Map<string, { count: number; resetAt: number }>()
@@ -52,15 +53,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 })
   }
 
-  const doctor = findDoctorByEmail(email)
+  const doctor = await findDoctorByEmail(email)
   if (!doctor) {
+    await recordAudit({ action: 'login.failure', detail: `unknown:${email}`, ip })
     return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 })
   }
 
   const valid = await verifyPassword(password, doctor.passwordHash)
   if (!valid) {
+    await recordAudit({ actorId: doctor.id, actorRole: doctor.role, action: 'login.failure', detail: 'bad password', ip })
     return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 })
   }
+
+  await recordAudit({ actorId: doctor.id, actorRole: doctor.role, action: 'login.success', ip })
 
   const token = await createSessionToken({
     sub: doctor.id,
@@ -79,7 +84,7 @@ export async function POST(request: NextRequest) {
     httpOnly: true,
     secure: isProduction,
     sameSite: 'lax',
-    maxAge: 60 * 60 * 8, // 8 hours
+    maxAge: 60 * 60 * 24 * 7, // 7 days
     path: '/',
   })
 

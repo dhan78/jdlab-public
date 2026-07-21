@@ -102,7 +102,57 @@ pnpm build
 pnpm start
 ```
 
-## 📁 Project Structure
+## � Development Workflow
+
+The standard loop for adding a feature or fixing a bug. Use **npm** on the JPMC machine (see the Outline note about the proxy).
+
+### 1. Make the change
+Edit code under `app/`, `components/`, `lib/`, etc.
+
+### 2. If you changed the database schema (`lib/db/schema.ts`)
+```bash
+npm run db:generate    # creates a new migration in drizzle/ from the schema diff
+npm run db:migrate     # applies pending migrations to your local Postgres
+```
+Commit **both** the schema change **and** the generated `drizzle/*.sql` + `drizzle/meta/*` files — the migration is how other machines get the change.
+
+### 3. Validate
+```bash
+npm run type-check     # tsc --noEmit
+npm run lint           # optional
+npm run test           # optional (vitest)
+```
+
+### 4. Commit & push (Bitbucket)
+`develop`/`master`/`main` are **protected** — you cannot push to them directly. Push a feature branch and open a PR.
+```bash
+git add -A
+git commit -m "Short summary" -m "Optional detail about why."
+# push local branch to a NON-protected remote branch:
+git push origin HEAD:feature/<your-branch>
+```
+Then open the PR from the link Bitbucket prints, targeting `develop`.
+
+> Commits must use your corporate identity (a `CommitterIdentityHook` enforces it):
+> ```bash
+> git config user.name  "v032823"
+> git config user.email "v032823@jpmcfid.jpmorgan.com"
+> ```
+
+### 5. Mirror the source to Outline (optional)
+```powershell
+$env:NODE_USE_ENV_PROXY='1'; npm run outline:publish
+```
+
+### 6. Pull the change on another machine
+```bash
+git pull
+npm install            # if dependencies changed
+npm run db:migrate     # apply any new migrations (idempotent)
+npm run dev
+```
+
+## �📁 Project Structure
 
 ```
 ├── app/
@@ -219,6 +269,55 @@ curl -X POST http://localhost:3000/api/quote \
     "rush": false
   }'
 ```
+
+## � Outline Wiki Sync
+
+Two scripts sync the repository's source files to (and from) an [Outline](https://www.getoutline.com/) wiki, preserving the folder structure so it can be reproduced on another machine.
+
+- `scripts/publish-to-outline.ts` — walks folders and writes a **parent index document** (a directory tree) plus **one child document per top-level folder** (`app`, `components`, `lib`, …), each containing one section per file. Idempotent: re-running replaces the bodies.
+- `scripts/import-from-outline.ts` — reads the parent + all child documents and recreates every file at its original path.
+
+> **Why child documents?** This Outline instance rejects a single document larger than ~560 KB (gateway `502`). The full repo is ~880 KB of text, so it's split per top-level folder; each child stays under the limit. Bodies are also chunked (~40 KB per API request) with retry/backoff on `502`.
+
+### Configuration (`.env.local`)
+
+```bash
+OUTLINE_URL=https://docs.jdlab.us/api      # self-hosted; omit for getoutline.com cloud
+OUTLINE_TOKEN=ol_api_xxxxxxxxxxxxxxxx       # Outline → Settings → API Tokens
+OUTLINE_DOCUMENT_ID=ZereHWBBc7             # parent doc urlId from /doc/<slug>-<urlId> (or use OUTLINE_DOCUMENT_URL)
+```
+
+### Publish (repo → Outline)
+
+```powershell
+# all default targets (app, components, lib, drizzle, scripts, tests, specs, deploy, test-fixtures + root config)
+npm run outline:publish
+
+# selective: pass paths after `--` (overrides defaults; folders walked recursively)
+npm run outline:publish -- app/api lib/db docker-compose.yml README.md
+```
+
+### Import (Outline → files, reproduce on another machine)
+
+```powershell
+npm run outline:import                    # writes to ./outline-export
+npm run outline:import -- --out ../restored
+npm run outline:import -- --dry-run       # preview, no writes
+```
+
+Ignored automatically: `node_modules`, `.next`, `.git`, `dist`, `public`, lockfiles, binary/font/media files, files > 256 KB, and **all secrets** (`.env*` are never synced). Text fixtures under `test-fixtures/` (SVG + ASCII STL) and the `deploy/` tree **are** synced so seeding and deployment can be reproduced. Because binaries (incl. `public/`) are excluded, copy `public/` and recreate `.env.local` separately when replicating.
+
+### ⚠️ Corporate proxy note (required on JPMC machines)
+
+`docs.jdlab.us` resolves to a Tailscale-range (`100.x`) address reachable **only via the corporate proxy** (`alpacaproxy`, `http://localhost:9443`). Node's `fetch` ignores `HTTP_PROXY`/`HTTPS_PROXY` by default, so a direct run fails with `fetch failed` (`UND_ERR_CONNECT_TIMEOUT`).
+
+Set `NODE_USE_ENV_PROXY=1` **before** running (it's read at Node startup — setting it inside the script is too late):
+
+```powershell
+$env:NODE_USE_ENV_PROXY='1'; npm run outline:publish -- app/api lib/db
+```
+
+Add `$env:NODE_USE_ENV_PROXY = '1'` to your PowerShell `$PROFILE` to make it permanent. The proxy tunnels HTTPS via `CONNECT` (no TLS interception), so no extra CA certificate is needed.
 
 ## 📝 License
 

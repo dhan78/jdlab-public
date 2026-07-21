@@ -3,6 +3,24 @@ import { ClientSecretCredential } from '@azure/identity'
 
 const SENDER = 'info@jdlab.us'
 
+// Email is only attempted when the Graph credentials are configured, so local
+// dev (and the demo) silently no-op instead of throwing.
+function isEmailConfigured(): boolean {
+  return !!(
+    process.env.AZURE_TENANT_ID &&
+    process.env.AZURE_CLIENT_ID &&
+    process.env.AZURE_CLIENT_SECRET
+  )
+}
+
+function esc(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
 function getGraphClient() {
   const credential = new ClientSecretCredential(
     process.env.AZURE_TENANT_ID!,
@@ -76,6 +94,72 @@ export async function sendPasswordResetEmail({ name, email, token }: PasswordRes
           </a>
         </p>
         <p style="color:#666;font-size:14px;">If you did not request a password reset, you can safely ignore this email.</p>
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;" />
+        <p style="color:#666;font-size:14px;">JD Dental Lab &mdash; Precision Digital Dentistry</p>
+      </div>
+    `,
+  )
+}
+
+interface CaseNotifyBase {
+  to: string
+  recipientName: string
+  caseNumber: string
+  caseTitle: string
+  caseToken: string
+}
+
+function caseUrl(token: string): string {
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? 'https://jdlab.us'
+  return `${baseUrl}/portal/cases/${encodeURIComponent(token)}`
+}
+
+/** Notify the other party that a new message was posted to a case thread. */
+export async function sendCaseMessageNotification(
+  params: CaseNotifyBase & { authorName: string; snippet: string }
+): Promise<void> {
+  if (!isEmailConfigured()) return
+  const url = caseUrl(params.caseToken)
+  await sendMail(
+    params.to,
+    `New message on ${params.caseNumber} — ${params.caseTitle}`,
+    `
+      <div style="font-family:sans-serif;max-width:600px;margin:0 auto;">
+        <h2 style="color:#0066cc;">New message on your case</h2>
+        <p>Hello ${esc(params.recipientName)},</p>
+        <p><strong>${esc(params.authorName)}</strong> posted a new message on
+           <strong>${esc(params.caseNumber)} — ${esc(params.caseTitle)}</strong>:</p>
+        <blockquote style="border-left:3px solid #e5e7eb;margin:16px 0;padding:8px 16px;color:#444;">
+          ${esc(params.snippet)}
+        </blockquote>
+        <p style="margin:28px 0;">
+          <a href="${url}" style="background:#0066cc;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">View Case</a>
+        </p>
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;" />
+        <p style="color:#666;font-size:14px;">JD Dental Lab &mdash; Precision Digital Dentistry</p>
+      </div>
+    `,
+  )
+}
+
+/** Notify the doctor that the lab moved their case to a new stage. */
+export async function sendCaseStatusNotification(
+  params: CaseNotifyBase & { statusLabel: string }
+): Promise<void> {
+  if (!isEmailConfigured()) return
+  const url = caseUrl(params.caseToken)
+  await sendMail(
+    params.to,
+    `${params.caseNumber} is now "${params.statusLabel}"`,
+    `
+      <div style="font-family:sans-serif;max-width:600px;margin:0 auto;">
+        <h2 style="color:#0066cc;">Case status updated</h2>
+        <p>Hello ${esc(params.recipientName)},</p>
+        <p>Your case <strong>${esc(params.caseNumber)} — ${esc(params.caseTitle)}</strong>
+           has moved to <strong>${esc(params.statusLabel)}</strong>.</p>
+        <p style="margin:28px 0;">
+          <a href="${url}" style="background:#0066cc;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">View Case</a>
+        </p>
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;" />
         <p style="color:#666;font-size:14px;">JD Dental Lab &mdash; Precision Digital Dentistry</p>
       </div>

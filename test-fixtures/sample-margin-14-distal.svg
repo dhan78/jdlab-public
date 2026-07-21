@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <rect width="800" height="600" fill="#0f1720"/>
+  <text x="24" y="40" fill="#e8e8e8" font-family="Segoe UI, Arial" font-size="22" font-weight="700">MARGIN VIEW — Tooth #14 (crown prep)</text>
+  <text x="24" y="68" fill="#9aa0a6" font-family="Segoe UI, Arial" font-size="16">Distal margin unclear where scan was bloody — please confirm line</text>
+
+  <!-- prepped molar, occlusal-ish view -->
+  <g transform="translate(250,150)">
+    <ellipse cx="150" cy="170" rx="170" ry="150" fill="#cdbfa3" stroke="#9a8f73" stroke-width="2"/>
+    <ellipse cx="150" cy="170" rx="110" ry="95" fill="#b7a988"/>
+    <!-- prepared surface -->
+    <ellipse cx="150" cy="165" rx="72" ry="60" fill="#9c8f6f"/>
+
+    <!-- green proposed margin line -->
+    <ellipse cx="150" cy="170" rx="128" ry="112" fill="none" stroke="#37d67a" stroke-width="3" stroke-dasharray="6 5"/>
+    <text x="150" y="10" fill="#37d67a" font-family="Segoe UI, Arial" font-size="14" text-anchor="middle">proposed margin</text>
+  </g>
+
+  <!-- red annotation box on distal -->
+  <rect x="470" y="250" width="150" height="120" fill="none" stroke="#ff4d4f" stroke-width="3"/>
+  <text x="545" y="240" fill="#ff4d4f" font-family="Segoe UI, Arial" font-size="15" font-weight="700" text-anchor="middle">distal — unclear</text>
+  <line x1="545" y1="370" x2="470" y2="420" stroke="#ff4d4f" stroke-width="2"/>
+  <text x="300" y="440" fill="#ffb3b3" font-family="Segoe UI, Arial" font-size="14">Bring 0.5mm more cervical on disto-lingual?</text>
+
+  <text x="24" y="576" fill="#5f6368" font-family="Segoe UI, Arial" font-size="13">SYNTHETIC TEST FIXTURE — not a real patient image</text>
+</svg>

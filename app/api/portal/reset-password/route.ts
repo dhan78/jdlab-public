@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Check that token exists in store and hasn't been used
-  const storedToken = findValidResetToken(token)
+  const storedToken = await findValidResetToken(token)
   if (!storedToken) {
     return NextResponse.json(
       { error: 'Invalid or expired reset link. Please request a new one.' },
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
   }
 
   const passwordHash = await hashPassword(password)
-  const updated = updateDoctorPassword(jwtPayload.sub, passwordHash)
+  const updated = await updateDoctorPassword(jwtPayload.sub, passwordHash)
 
   if (!updated) {
     return NextResponse.json(
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  markResetTokenUsed(token)
+  await markResetTokenUsed(token)
 
   return NextResponse.json({
     success: true,

@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2b6cb0"/>
+      <stop offset="100%" stop-color="#1a4a80"/>
+    </linearGradient>
+    <linearGradient id="bone" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#d9b25e"/>
+      <stop offset="100%" stop-color="#b8863b"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="600" fill="url(#bg)"/>
+  <text x="24" y="40" fill="#eaf2ff" font-family="Segoe UI, Arial" font-size="22" font-weight="700">SURGICAL GUIDE — Maxilla (tooth-supported)</text>
+  <text x="24" y="66" fill="#bcd3f0" font-family="Segoe UI, Arial" font-size="15">3DDX / BioHorizons keyless · 3 sleeves · design render</text>
+
+  <!-- maxillary arch (U shape) -->
+  <path d="M400 130
+           C250 130 180 220 180 340
+           C180 440 240 500 300 500
+           M400 130
+           C550 130 620 220 620 340
+           C620 440 560 500 500 500"
+        fill="none" stroke="url(#bone)" stroke-width="70" stroke-linecap="round"/>
+
+  <!-- green guide shell over the arch -->
+  <path d="M400 130
+           C250 130 180 220 180 340
+           C180 440 240 500 300 500
+           M400 130
+           C550 130 620 220 620 340
+           C620 440 560 500 500 500"
+        fill="none" stroke="#37d67a" stroke-width="26" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- white teeth blobs -->
+  <g fill="#f3efe6">
+    <ellipse cx="300" cy="150" rx="20" ry="16"/>
+    <ellipse cx="360" cy="138" rx="20" ry="16"/>
+    <ellipse cx="440" cy="138" rx="20" ry="16"/>
+    <ellipse cx="500" cy="150" rx="20" ry="16"/>
+    <ellipse cx="210" cy="270" rx="20" ry="18"/>
+    <ellipse cx="590" cy="270" rx="20" ry="18"/>
+  </g>
+
+  <!-- drill sleeves (cylinders) -->
+  <g>
+    <rect x="243" y="330" width="26" height="70" rx="6" fill="#e8b93a" stroke="#7a5a10" stroke-width="2"/>
+    <ellipse cx="256" cy="330" rx="13" ry="6" fill="#fbe08a"/>
+    <rect x="530" y="330" width="26" height="70" rx="6" fill="#e8b93a" stroke="#7a5a10" stroke-width="2"/>
+    <ellipse cx="543" cy="330" rx="13" ry="6" fill="#fbe08a"/>
+    <rect x="388" y="150" width="26" height="70" rx="6" fill="#ff5a5f" stroke="#7a1013" stroke-width="2"/>
+    <ellipse cx="401" cy="150" rx="13" ry="6" fill="#ff9a9d"/>
+  </g>
+
+  <text x="24" y="576" fill="#9db8dd" font-family="Segoe UI, Arial" font-size="13">SYNTHETIC TEST FIXTURE — not a real patient case</text>
+</svg>

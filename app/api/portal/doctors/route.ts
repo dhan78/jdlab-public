@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
   }
 
-  const doctors = listDoctors().map(({ id, name, email, role, createdAt, practiceName, practiceAddress, phone }) => ({
+  const doctors = (await listDoctors()).map(({ id, name, email, role, createdAt, practiceName, practiceAddress, phone }) => ({
     id, name, email, role, createdAt, practiceName, practiceAddress, phone,
   }))
 
@@ -48,6 +48,8 @@ export async function POST(request: NextRequest) {
   const name = typeof body.name === 'string' ? body.name.trim() : ''
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
   const password = typeof body.password === 'string' ? body.password : ''
+  const roleInput = typeof (body as Record<string, unknown>).role === 'string' ? ((body as Record<string, unknown>).role as string) : 'doctor'
+  const role: 'doctor' | 'planner' = roleInput === 'planner' ? 'planner' : 'doctor'
   const practiceName = typeof (body as Record<string, unknown>).practiceName === 'string' ? ((body as Record<string, unknown>).practiceName as string).trim() : undefined
   const practiceAddress = typeof (body as Record<string, unknown>).practiceAddress === 'string' ? ((body as Record<string, unknown>).practiceAddress as string).trim() : undefined
   const phone = typeof (body as Record<string, unknown>).phone === 'string' ? ((body as Record<string, unknown>).phone as string).trim() : undefined
@@ -72,12 +74,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Password is too long' }, { status: 400 })
   }
 
-  if (findDoctorByEmail(email)) {
+  if (await findDoctorByEmail(email)) {
     return NextResponse.json({ error: 'A doctor with this email already exists' }, { status: 409 })
   }
 
   const passwordHash = await hashPassword(password)
-  const doctor = addDoctor({ name, email, passwordHash, role: 'doctor', practiceName: practiceName || undefined, practiceAddress: practiceAddress || undefined, phone: phone || undefined })
+  const doctor = await addDoctor({ name, email, passwordHash, role, practiceName: practiceName || undefined, practiceAddress: practiceAddress || undefined, phone: phone || undefined })
 
   return NextResponse.json(
     {

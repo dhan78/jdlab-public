@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3a4a5a"/>
+      <stop offset="100%" stop-color="#20303f"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="600" fill="url(#bg2)"/>
+  <text x="24" y="40" fill="#eef3f7" font-family="Segoe UI, Arial" font-size="22" font-weight="700">SURGICAL GUIDE — Mandible</text>
+  <text x="24" y="66" fill="#c3d1dc" font-family="Segoe UI, Arial" font-size="15">Straumann VeloDrill · self-locking sleeve · fit check on model</text>
+
+  <!-- mandibular arch (inverted U, wider) -->
+  <path d="M400 470
+           C250 470 190 360 190 250
+           C190 180 240 140 300 140
+           M400 470
+           C550 470 610 360 610 250
+           C610 180 560 140 500 140"
+        fill="none" stroke="#e6e2d8" stroke-width="66" stroke-linecap="round"/>
+  <!-- green guide overlay -->
+  <path d="M400 470
+           C250 470 190 360 190 250
+           C190 180 240 140 300 140
+           M400 470
+           C550 470 610 360 610 250
+           C610 180 560 140 500 140"
+        fill="none" stroke="#37d67a" stroke-width="24" stroke-linecap="round" opacity="0.6"/>
+
+  <!-- sleeve -->
+  <rect x="243" y="270" width="26" height="72" rx="6" fill="#8fd0ff" stroke="#2b6f9c" stroke-width="2"/>
+  <ellipse cx="256" cy="270" rx="13" ry="6" fill="#cdeaff"/>
+  <text x="280" y="285" fill="#8fd0ff" font-family="Segoe UI, Arial" font-size="14">sleeve · site #19</text>
+
+  <text x="24" y="576" fill="#8aa0b3" font-family="Segoe UI, Arial" font-size="13">SYNTHETIC TEST FIXTURE — not a real patient case</text>
+</svg>
