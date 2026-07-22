@@ -21,23 +21,19 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Install pnpm
-      uses: pnpm/action-setup@v4
-      with:
-        version: 11
-
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '22'
-        cache: 'pnpm'
+        cache: 'npm'
 
     - name: Install Dependencies
-      run: pnpm install --frozen-lockfile
+      run: npm ci
 
     - name: Build Next.js Application
-      run: pnpm build
+      run: npm run build
       env:
+        NEXT_TELEMETRY_DISABLED: '1'
         PORTAL_JWT_SECRET: ${{ secrets.PORTAL_JWT_SECRET }}
 
 
@@ -103,9 +99,20 @@ jobs:
       uses: docker/metadata-action@v5
       with:
         images: ghcr.io/${{ github.repository }}
+        annotations: |
+          org.opencontainers.image.title=JD Dental Lab
+          org.opencontainers.image.description=Next.js 15 marketing site and secure doctors portal for a digital dental & medical-device lab — surgical-guide, crown/bridge and denture case submission with real-time status tracking, SLA deadline alerts, and case messaging.
+          org.opencontainers.image.vendor=JD Dental Lab
         tags: |
           type=raw,value=latest
           type=raw,value=${{ steps.calver.outputs.tag }}
+
+    # QEMU + Buildx are required to cross-build linux/arm64 on the amd64 runner.
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
 
     - name: Build and Push Docker Image
       uses: docker/build-push-action@v6
@@ -113,9 +120,13 @@ jobs:
         context: .
         platforms: linux/arm64
         file: ./Dockerfile
-        push: true
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
+        annotations: ${{ steps.meta.outputs.annotations }}
+        # Push a zstd-compressed image (GHCR supports OCI zstd): smaller layers +
+        # much faster decompression on pull. force-compression re-encodes the
+        # base layers too. push=true here replaces the standalone `push:` input.
+        outputs: type=image,compression=zstd,force-compression=true,push=true
         build-args: |
           PORTAL_JWT_SECRET=${{ secrets.PORTAL_JWT_SECRET }}
 
