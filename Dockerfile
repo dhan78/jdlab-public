@@ -1,7 +1,7 @@
 # Base image: corporate-managed Node 22 (RHEL 8 UBI). docker.io is blocked, so we
 # use the sanctioned managed base image and point npm at the internal registry.
-ARG NODE_IMAGE=jetae-publish.prod.aws.jpmchase.net/container-base/managedbaseimages/nodejs:22-stable
-ARG NPM_REGISTRY=https://artifacts-read.gkp.jpmchase.net/artifactory/api/npm/npm
+ARG NODE_IMAGE=node:22-slim
+ARG NPM_REGISTRY=https://registry.npmjs.org
 
 FROM ${NODE_IMAGE} AS base
 WORKDIR /app
