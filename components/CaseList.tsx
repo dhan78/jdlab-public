@@ -62,12 +62,6 @@ function StatusTracker({ status, order = DEFAULT_ORDER }: { status: CaseStatus; 
           <li key={st} className={`flex items-start ${last ? '' : 'flex-1'}`}>
             <div className="flex flex-col items-center gap-1.5">
               <span className="relative flex items-center justify-center w-7 h-7">
-                {current && !last && (
-                  <span
-                    className={`absolute inset-0 rounded-full ${meta.soft} motion-safe:animate-ping`}
-                    aria-hidden="true"
-                  />
-                )}
                 <span
                   className={
                     current

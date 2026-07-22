@@ -14,9 +14,15 @@
  *   npm run outline:import                 # writes to ./outline-export
  *   npm run outline:import -- --out ../restored
  *   npm run outline:import -- --dry-run    # list files without writing
+ *   npm run outline:import -- --out . --prune   # reproduce in place AND delete
+ *                                          # STALE files (ghosts) under reproduced
+ *                                          # folders. Add --dry-run to preview the
+ *                                          # deletions. Only removes files the
+ *                                          # publisher would track — never binaries,
+ *                                          # .env*, lockfiles, or files > 256 KB.
  */
-import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve, relative, isAbsolute } from 'node:path'
+import { mkdir, writeFile, readdir, stat, rm, rmdir } from 'node:fs/promises'
+import { dirname, join, resolve, relative, isAbsolute, extname, sep } from 'node:path'
 
 const API = (process.env.OUTLINE_URL ?? 'https://app.getoutline.com/api').replace(/\/+$/, '')
 const TOKEN = process.env.OUTLINE_TOKEN
@@ -31,7 +37,24 @@ function arg(name: string, fallback = ''): string {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback
 }
 const DRY = process.argv.includes('--dry-run')
+const PRUNE = process.argv.includes('--prune')
 const OUT = arg('out', 'outline-export')
+
+// Prune scoping (mirrors publish-to-outline's ignore rules) so --prune only ever
+// deletes STALE SOURCE files the publisher would have tracked — never binaries,
+// secrets, lockfiles, or oversized files it intentionally skips.
+const PRUNE_SKIP_DIRS = new Set([
+  'node_modules', '.git', '.next', 'dist', 'build', 'out', 'coverage',
+  '.turbo', '.vercel',
+])
+const PRUNE_SKIP_FILES = new Set([
+  'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'next-env.d.ts',
+])
+const PRUNE_SKIP_EXT = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.woff', '.woff2',
+  '.ttf', '.otf', '.pdf', '.zip', '.gz', '.mp4', '.mov', '.lock',
+])
+const PRUNE_MAX_BYTES = 256 * 1024
 
 function resolveDocId(): string {
   const raw = process.env.OUTLINE_DOCUMENT_URL ?? process.env.OUTLINE_DOCUMENT_ID
@@ -80,7 +103,7 @@ function safeJoin(outDir: string, rel: string): string | null {
 }
 
 // Parse "## `path`" sections from a document body and write each file.
-async function writeSections(text: string): Promise<number> {
+async function writeSections(text: string, written: Set<string>): Promise<number> {
   const region = (() => {
     const i = text.indexOf('\n# Files')
     return i >= 0 ? text.slice(i) : text
@@ -108,6 +131,7 @@ async function writeSections(text: string): Promise<number> {
       continue
     }
     count++
+    written.add(rel)
     if (DRY) {
       console.log(`would write: ${join(OUT, rel)}  (${content.length} bytes)`)
       continue
@@ -119,6 +143,98 @@ async function writeSections(text: string): Promise<number> {
   return count
 }
 
+// True when a file would be IGNORED by the publisher — such files are never
+// candidates for pruning (they legitimately live on disk but aren't in the doc).
+function isPublisherIgnored(name: string, sizeBytes: number): boolean {
+  if (PRUNE_SKIP_FILES.has(name)) return true
+  if (PRUNE_SKIP_EXT.has(extname(name).toLowerCase())) return true
+  if (name === '.env' || name.startsWith('.env.')) return true
+  if (sizeBytes > PRUNE_MAX_BYTES) return true
+  return false
+}
+
+// Recursively collect publishable file paths (relative to baseAbs, forward-slash)
+// under dirAbs — skipping ignored dirs and files the publisher wouldn't track.
+async function collectPrunable(baseAbs: string, dirAbs: string, acc: string[]): Promise<void> {
+  let entries: string[]
+  try {
+    entries = await readdir(dirAbs)
+  } catch {
+    return
+  }
+  for (const name of entries) {
+    if (PRUNE_SKIP_DIRS.has(name)) continue
+    const abs = join(dirAbs, name)
+    const s = await stat(abs)
+    if (s.isDirectory()) {
+      await collectPrunable(baseAbs, abs, acc)
+    } else if (!isPublisherIgnored(name, s.size)) {
+      acc.push(relative(baseAbs, abs).split(sep).join('/'))
+    }
+  }
+}
+
+// Recursively remove directories that are (or become) empty under dirAbs.
+async function removeEmptyDirs(baseAbs: string, dirAbs: string): Promise<void> {
+  let entries: string[]
+  try {
+    entries = await readdir(dirAbs)
+  } catch {
+    return
+  }
+  for (const name of entries) {
+    const abs = join(dirAbs, name)
+    if ((await stat(abs)).isDirectory()) await removeEmptyDirs(baseAbs, abs)
+  }
+  if ((await readdir(dirAbs)).length === 0) {
+    await rmdir(dirAbs)
+    console.log(`pruned empty dir: ${relative(baseAbs, dirAbs).split(sep).join('/')}`)
+  }
+}
+
+// Delete stale files under the top-level FOLDERS reproduced this run. Scoped to
+// those folders only (root-level files have no '/', so the output root itself is
+// never scanned — node_modules, .env*, top-level junk are safe). Opt-in --prune.
+async function pruneStale(written: Set<string>): Promise<void> {
+  const baseAbs = resolve(OUT)
+
+  const roots = new Set<string>()
+  for (const rel of written) {
+    const i = rel.indexOf('/')
+    if (i > 0) roots.add(rel.slice(0, i))
+  }
+  if (roots.size === 0) {
+    console.log('prune: no reproduced folders to scan')
+    return
+  }
+
+  let removed = 0
+  for (const root of roots) {
+    const existing: string[] = []
+    await collectPrunable(baseAbs, join(baseAbs, root), existing)
+    for (const rel of existing) {
+      if (written.has(rel)) continue
+      if (DRY) {
+        console.log(`would prune (stale): ${rel}`)
+      } else {
+        await rm(join(baseAbs, rel))
+        console.log(`pruned (stale): ${rel}`)
+      }
+      removed++
+    }
+  }
+
+  if (!DRY) {
+    for (const root of roots) await removeEmptyDirs(baseAbs, join(baseAbs, root))
+  }
+
+  console.log(
+    removed === 0
+      ? 'prune: nothing stale'
+      : `prune: ${DRY ? 'would remove' : 'removed'} ${removed} stale file(s)`,
+  )
+}
+
 async function main() {
   const docId = resolveDocId()
   const parent = await api<{ data: { id: string; title: string; text: string } }>(
@@ -128,20 +244,26 @@ async function main() {
   // Files live in child documents (one per top-level folder); the parent holds
   // only the tree. Parse the parent too (backward-compatible with the old
   // single-document format), then every child.
-  let total = await writeSections(parent.data.text ?? '')
+  const written = new Set<string>()
+  let total = await writeSections(parent.data.text ?? '', written)
 
   const children = await api<{ data: { id: string; title: string }[] }>('documents.list', {
     parentDocumentId: parent.data.id, limit: 100,
   })
   for (const child of children.data) {
     const doc = await api<{ data: { text: string } }>('documents.info', { id: child.id })
-    const n = await writeSections(doc.data.text ?? '')
+    const n = await writeSections(doc.data.text ?? '', written)
     if (n > 0) console.log(`  · ${child.title}: ${n} file(s)`)
     total += n
   }
 
   console.log(`\n${DRY ? 'would reproduce' : 'reproduced'} ${total} file(s) from "${parent.data.title}" into ${OUT}/`)
-  if (total === 0) console.error('No "## `path`" sections found — was the doc created by outline:publish?')
+  if (total === 0) {
+    console.error('No "## `path`" sections found — was the doc created by outline:publish?')
+    return
+  }
+
+  if (PRUNE) await pruneStale(written)
 }
 
 main().catch(e => {

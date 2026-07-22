@@ -152,6 +152,39 @@ npm run db:migrate     # apply any new migrations (idempotent)
 npm run dev
 ```
 
+### Operational scripts
+
+**Reset the portal admin password** (without re-seeding). The password is stored
+hashed in `users.password_hash`; the seed only sets it on first creation, so
+changing `PORTAL_ADMIN_PASSWORD` in `.env.local` later has no effect. Use:
+```bash
+npm run db:set-admin-password -- 'NewSecurePass123'         # explicit password
+npm run db:set-admin-password                                # uses PORTAL_ADMIN_PASSWORD
+npm run db:set-admin-password -- --email admin@jdlab.us 'NewSecurePass123'  # specific email
+```
+Non-destructive (touches one user row, never TRUNCATEs). It targets whatever
+`DATABASE_URL` is in `.env.local` — so it changes the admin in **that** database.
+Log in with the new password immediately; no restart needed.
+
+**Run a db script against a different env file / database.** The `db:*` and
+`outline:*` npm scripts hardcode `--env-file=.env.local`. To use another file,
+call `tsx` directly:
+```bash
+npx tsx --env-file=.env.production scripts/set-admin-password.ts 'NewSecurePass123'
+npx tsx --env-file=.env.prod lib/db/seed.ts
+```
+Or override the vars inline (set `PORTAL_JWT_SECRET` too — `lib/portal-auth.ts`
+requires it to be present):
+```bash
+DATABASE_URL='postgresql://jdlab:secret@localhost:5432/jdlab' \
+PORTAL_JWT_SECRET='any-nonempty-value' \
+npx tsx scripts/set-admin-password.ts 'NewSecurePass123'
+```
+> ⚠️ Precedence: Node's `--env-file` does **not** overwrite variables already
+> exported in the shell. If a different env file "isn't taking effect," run
+> `printenv DATABASE_URL` (or `unset DATABASE_URL`) — an exported value wins over
+> the file.
+
 ## �📁 Project Structure
 
 ```
@@ -303,7 +336,12 @@ npm run outline:publish -- app/api lib/db docker-compose.yml README.md
 npm run outline:import                    # writes to ./outline-export
 npm run outline:import -- --out ../restored
 npm run outline:import -- --dry-run       # preview, no writes
+npm run outline:import -- --out . --prune # reproduce in place AND delete stale
+                                          # "ghost" files under reproduced folders
+                                          # (add --dry-run to preview deletions)
 ```
+
+`--prune` removes files that are no longer in the Outline doc but still on disk under a reproduced folder — the mechanism that previously left a stale `app/portal/(authenticated)/page.tsx` shadowing the real portal page. It only deletes files the publisher would track (never binaries, `.env*`, lockfiles, or files > 256 KB) and never scans the output root itself.
 
 Ignored automatically: `node_modules`, `.next`, `.git`, `dist`, `public`, lockfiles, binary/font/media files, files > 256 KB, and **all secrets** (`.env*` are never synced). Text fixtures under `test-fixtures/` (SVG + ASCII STL) and the `deploy/` tree **are** synced so seeding and deployment can be reproduced. Because binaries (incl. `public/`) are excluded, copy `public/` and recreate `.env.local` separately when replicating.
 

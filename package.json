@@ -13,6 +13,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:seed": "tsx --env-file=.env.local lib/db/seed.ts",
+    "db:set-admin-password": "tsx --env-file=.env.local scripts/set-admin-password.ts",
     "outline:publish": "tsx --env-file=.env.local scripts/publish-to-outline.ts",
     "outline:import": "tsx --env-file=.env.local scripts/import-from-outline.ts"
   },
