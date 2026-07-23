@@ -155,6 +155,13 @@ function IconChevron({ className = 'w-4 h-4' }: { className?: string }) {
     </svg>
   )
 }
+function IconCheck({ className = 'w-4 h-4' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+      <path d="m5 10.5 3.5 3.5L15 6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
 
 export default function CaseList() {
   const [cases, setCases] = useState<CaseRow[]>([])
@@ -397,13 +404,23 @@ export default function CaseList() {
   const subtitle = isDoctor
     ? 'Track your submitted cases and talk to the lab team.'
     : 'All cases across doctors — open one to review and reply.'
-  const activeCount = cases.filter(c => c.status !== 'shipped').length
   const labelField = 'block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1.5'
   const inputField = 'w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition'
 
   // Client-side filtering/search over the fetched cases.
   const q = query.trim().toLowerCase()
   const hasFilters = q !== '' || statusFilter !== 'all' || typeFilter !== 'all' || rushOnly || unreadOnly
+
+  // Human-readable summary of the current view/selection, shown in the header so
+  // it's always clear which scope + filters are applied.
+  // Effective sort: the shipped archive is always ordered by surgery date.
+  const sortLabel = scope === 'shipped' || sortBy === 'surgery' ? 'Surgery date' : 'Recently updated'
+  const appliedFilters: string[] = []
+  if (statusFilter !== 'all') appliedFilters.push(STATUS_META[statusFilter].label)
+  if (typeFilter !== 'all') appliedFilters.push(CASE_TYPE_LABELS[typeFilter])
+  if (rushOnly) appliedFilters.push('Rush')
+  if (unreadOnly) appliedFilters.push('Unread')
+  if (q) appliedFilters.push(`"${query.trim()}"`)
   const visibleCases = cases
     .filter(c =>
       scope === 'all' ? true : scope === 'shipped' ? c.status === 'shipped' : c.status !== 'shipped'
@@ -470,80 +487,38 @@ export default function CaseList() {
   return (
     <div>
             {/* Sticky toolbar: title, scope/sort, and search/filters stay pinned while scrolling */}
-            <div className={`sticky top-16 z-30 -mx-4 px-4 mb-6 bg-slate-50/90 backdrop-blur supports-[backdrop-filter]:bg-slate-50/75 transition-all duration-200 ${condensed ? 'py-2 shadow-sm border-b border-slate-200' : 'pt-3 pb-3'}`}>
-              <div className="flex items-end justify-between gap-4 flex-wrap">
-              <div>
-                <h1 className={`font-bold tracking-tight text-slate-900 transition-all duration-200 ${condensed ? 'text-lg sm:text-xl' : 'text-2xl sm:text-3xl'}`}>{heading}</h1>
-                <p className={`text-slate-500 mt-1 transition-all duration-200 overflow-hidden ${condensed ? 'max-h-0 opacity-0 mt-0' : 'max-h-8 opacity-100'}`}>{subtitle}</p>
-                <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 transition-all duration-200 ${condensed ? 'mt-2' : 'mt-3'}`}>
-                  {/* View scope: hide shipped by default, reveal on demand */}
-                  <SegmentedControl
-                    ariaLabel="Show cases"
-                    value={scope}
-                    onChange={setScope}
-                    options={[
-                      { value: 'active', label: 'Active' },
-                      { value: 'shipped', label: 'Shipped' },
-                      { value: 'all', label: 'All' },
-                    ]}
-                  />
-                  <SegmentedControl
-                    ariaLabel="Sort cases"
-                    value={sortBy}
-                    onChange={chooseSort}
-                    options={[
-                      {
-                        value: 'recent',
-                        label: 'Recently updated',
-                        title: 'Sort by most recently updated',
-                        icon: <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><circle cx="10" cy="10" r="7" /><path d="M10 6v4l2.5 1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>,
-                      },
-                      {
-                        value: 'surgery',
-                        label: 'Surgery date',
-                        title: 'Sort by soonest surgery/due date',
-                        icon: <IconCalendar className="w-3.5 h-3.5" />,
-                      },
-                    ]}
-                  />
-                  <span className="text-xs text-slate-400 tabular-nums">{activeCount} active · {cases.length} total</span>
-                  {totalUnread > 0 && (
-                    <button
-                      type="button"
-                      onClick={toggleUnreadOnly}
-                      aria-pressed={unreadOnly}
-                      title={unreadOnly ? 'Showing only unread — click to show all' : `Show only the ${totalUnread} case${totalUnread === 1 ? '' : 's'} with unread messages`}
-                      className={`relative inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full transition ${unreadOnly ? 'bg-accent text-white ring-2 ring-accent/40' : 'bg-accent text-white animate-pulse hover:ring-2 hover:ring-accent/40'}`}
-                    >
-                      {!unreadOnly && (
-                        <span className="absolute -inset-1 rounded-full bg-accent/50 animate-ping" aria-hidden="true" />
-                      )}
-                      <span className="relative inline-flex items-center gap-1">
-                        <IconChat className="w-3 h-3" />
-                        {totalUnread} unread
-                      </span>
-                    </button>
+            <div className={`sticky top-16 z-30 -mx-4 px-4 mb-3 bg-slate-50/90 backdrop-blur supports-[backdrop-filter]:bg-slate-50/75 transition-all duration-200 ${condensed ? 'py-2 shadow-sm border-b border-slate-200' : 'pt-1 pb-2'}`}>
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                {/* Kept for accessibility + document outline (role context:
+                    "My Cases" vs "Work Queue"); the visible label below mirrors it. */}
+                <h1 className="sr-only">{heading}</h1>
+                <p className="sr-only">{subtitle}</p>
+                {/* Low-key context label — same row as the New Case action */}
+                <span className="text-xs tabular-nums" aria-hidden="true">
+                  <span className="font-medium text-slate-500">{heading}</span>
+                  {!loading && !error && cases.length > 0 && (
+                    <span className="text-slate-400"> · {visibleCases.length} of {cases.length}{appliedFilters.length > 0 ? <> · {appliedFilters.join(' · ')}</> : ''} · <span className="text-slate-500">by {sortLabel}</span></span>
                   )}
-                </div>
-              </div>
-              {isDoctor && (
-                <button
-                  onClick={() => setShowForm(v => !v)}
-                  className="inline-flex items-center gap-1.5 bg-primary text-white text-sm font-medium px-4 py-2.5 rounded-lg hover:bg-primary/90 shadow-sm transition"
-                >
-                  {showForm ? 'Cancel' : (
-                    <>
-                      <span className="text-base leading-none">＋</span> New Case
-                    </>
-                  )}
-                </button>
-              )}
+                </span>
+                {isDoctor && (
+                  <button
+                    onClick={() => setShowForm(v => !v)}
+                    className="inline-flex items-center gap-1 bg-primary text-white text-xs font-medium px-2.5 py-1 rounded-md hover:bg-primary/90 shadow-sm transition"
+                  >
+                    {showForm ? 'Cancel' : (
+                      <>
+                        <span className="text-sm leading-none">＋</span> New Case
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
 
-              {/* Search / filters — pinned together with the header */}
+              {/* Unified control bar: search · filters · view · count (one row, wraps gracefully) */}
               {!loading && !error && cases.length > 0 && (
-                <div className={`flex flex-wrap items-center gap-2 transition-all duration-200 ${condensed ? 'mt-2' : 'mt-3'}`}>
-                  <div className="relative flex-1 min-w-[180px]">
+                <div className={`flex flex-wrap items-center gap-2 transition-all duration-200 ${condensed ? 'mt-1.5' : 'mt-2'}`}>
+                  {/* Search — full width on phones (own row), grows to fill from sm up */}
+                  <div className="relative w-full sm:w-auto sm:flex-1 sm:min-w-[200px]">
                     <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="9" cy="9" r="6" /><path d="m14 14 3 3" strokeLinecap="round" /></svg>
                     <input
                       type="search"
@@ -554,6 +529,8 @@ export default function CaseList() {
                       className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
                     />
                   </div>
+
+                  {/* Filters */}
                   <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as 'all' | CaseStatus)} aria-label="Filter by status" className="px-3 py-2 border border-slate-300 rounded-lg bg-white text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/30">
                     <option value="all">All statuses</option>
                     {CASE_STATUSES.map(s => <option key={s} value={s}>{STATUS_META[s].label}</option>)}
@@ -568,12 +545,73 @@ export default function CaseList() {
                   </select>
                   <label className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-300 rounded-lg bg-white text-sm text-slate-700 cursor-pointer select-none">
                     <input type="checkbox" checked={rushOnly} onChange={e => setRushOnly(e.target.checked)} className="w-4 h-4 rounded border-slate-300 text-red-600 focus:ring-red-500/40" />
-                    Rush only
+                    Rush
                   </label>
-                  {hasFilters && (
-                    <button type="button" onClick={clearFilters} className="px-3 py-2 text-sm text-slate-500 hover:text-primary">Clear</button>
+                  {totalUnread > 0 && (
+                    <button
+                      type="button"
+                      onClick={toggleUnreadOnly}
+                      aria-pressed={unreadOnly}
+                      title={unreadOnly ? 'Showing only unread — click to show all' : `Show only the ${totalUnread} case${totalUnread === 1 ? '' : 's'} with unread messages`}
+                      className={`relative inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-md transition duration-150 transform-gpu active:brightness-95 ${unreadOnly ? 'bg-white text-accent ring-2 ring-accent shadow-inner' : 'bg-accent text-white shadow-sm hover:shadow-md motion-safe:hover:scale-105'}`}
+                    >
+                      {!unreadOnly && (
+                        <span className="absolute -inset-1 rounded-md bg-accent/40 animate-ping" aria-hidden="true" />
+                      )}
+                      <span className="relative inline-flex items-center gap-1.5">
+                        {unreadOnly ? (
+                          <>
+                            <IconCheck className="w-3.5 h-3.5" />
+                            Unread only
+                          </>
+                        ) : (
+                          <>
+                            <IconChat className="w-3.5 h-3.5" />
+                            {totalUnread} unread
+                          </>
+                        )}
+                      </span>
+                    </button>
                   )}
-                  <span className="text-xs text-slate-400 tabular-nums ml-auto">{visibleCases.length} of {cases.length}</span>
+                  {hasFilters && (
+                    <button type="button" onClick={clearFilters} className="px-2.5 py-2 text-sm text-slate-500 hover:text-primary">Clear</button>
+                  )}
+
+                  {/* View controls: scope + sort — grouped so they always stay on one line together.
+                      Right-aligned from sm up; left-justified on phones. */}
+                  <div className="flex items-center gap-2 sm:ml-auto">
+                    <span className="hidden lg:block w-px h-6 bg-slate-200 mx-0.5" aria-hidden="true" />
+                    <SegmentedControl
+                      ariaLabel="Show cases"
+                      value={scope}
+                      onChange={setScope}
+                      options={[
+                        { value: 'active', label: 'Active' },
+                        { value: 'shipped', label: 'Shipped' },
+                        { value: 'all', label: 'All' },
+                      ]}
+                    />
+                    <SegmentedControl
+                      ariaLabel="Sort cases"
+                      value={sortBy}
+                      onChange={chooseSort}
+                      collapseLabels
+                      options={[
+                        {
+                          value: 'recent',
+                          label: 'Recently updated',
+                          title: 'Sort by most recently updated',
+                          icon: <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 3v5h5" /><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" /><path d="M12 7v5l3.5 2" /></svg>,
+                        },
+                        {
+                          value: 'surgery',
+                          label: 'Surgery date',
+                          title: 'Sort by soonest surgery/due date',
+                          icon: <IconCalendar className="w-3.5 h-3.5" />,
+                        },
+                      ]}
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -769,7 +807,7 @@ export default function CaseList() {
                                 <IconChat className="w-4 h-4" /> {c.messageCount}
                               </span>
                               {(c.unreadCount ?? 0) > 0 && (
-                                <span className="relative inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-accent text-white text-[11px] font-semibold tabular-nums animate-pulse" title={`${c.unreadCount} new message${c.unreadCount === 1 ? '' : 's'}`}>
+                                <span className="relative inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-accent text-white text-[11px] font-semibold tabular-nums" title={`${c.unreadCount} new message${c.unreadCount === 1 ? '' : 's'}`}>
                                   <span className="absolute -inset-1 rounded-full bg-accent/50 animate-ping" aria-hidden="true" />
                                   <span className="relative">{c.unreadCount}</span>
                                 </span>

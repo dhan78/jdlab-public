@@ -19,11 +19,18 @@ export function SegmentedControl<T extends string>({
   value,
   onChange,
   ariaLabel,
+  collapseLabels = false,
 }: {
   options: SegOption<T>[]
   value: T
   onChange: (value: T) => void
   ariaLabel?: string
+  /**
+   * When true, options that have an icon show icon-only on phones and reveal
+   * their text label from the `sm` breakpoint up. The label stays available to
+   * screen readers at all sizes. Keeps long labels from wrapping on mobile.
+   */
+  collapseLabels?: boolean
 }) {
   const btnRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const [thumb, setThumb] = useState<{ left: number; width: number } | null>(null)
@@ -73,7 +80,11 @@ export function SegmentedControl<T extends string>({
             }`}
           >
             {o.icon}
-            {o.label}
+            {collapseLabels && o.icon ? (
+              <span className="sr-only sm:not-sr-only">{o.label}</span>
+            ) : (
+              o.label
+            )}
           </button>
         )
       })}

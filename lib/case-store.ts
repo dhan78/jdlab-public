@@ -384,6 +384,23 @@ export async function getUnreadCounts(
   return out
 }
 
+// When a user last opened each case they've viewed. Backs the sidebar's
+// "recently viewed" ordering. Returns { [encodedCaseId]: ISO } — cases the
+// user has never opened are absent.
+export async function getLastViewedMap(userId: string): Promise<Record<string, string>> {
+  const uid = toIntId(userId)
+  if (uid < 0) return {}
+
+  const rows = await db
+    .select({ caseId: caseReads.caseId, lastReadAt: caseReads.lastReadAt })
+    .from(caseReads)
+    .where(eq(caseReads.userId, uid))
+
+  const out: Record<string, string> = {}
+  for (const r of rows) out[encodeCaseId(r.caseId)] = r.lastReadAt.toISOString()
+  return out
+}
+
 export async function addMessage(input: {
   caseId: string
   authorId: string | null

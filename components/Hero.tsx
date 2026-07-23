@@ -42,25 +42,25 @@ export default function Hero() {
         <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold mb-6 leading-tight text-dark">
           JD Dental Lab
           <span className="block text-transparent bg-clip-text bg-gradient-to-r from-primary via-secondary to-accent mt-2">
-            Global Innovation
+            Precision Digital Dentistry
           </span>
         </h1>
         <p className="text-lg sm:text-xl text-gray-700 max-w-3xl mx-auto mb-8">
-          Revolutionizing dental and medical device manufacturing with cutting-edge digital technology, 
-          automated workflows, and worldwide reach. Deliver excellence to patients globally.
+          Crowns, implants, and appliances crafted with fully digital workflows — paired with a
+          doctor portal that shows you exactly where every case is and when it ships.
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <button
+            onClick={scrollToContact}
+            className="btn-primary motion-safe:hover:scale-105 transition-transform shadow-lg"
+          >
+            Get Started
+          </button>
+          <button
             onClick={() => document.getElementById('services')?.scrollIntoView({ behavior: 'smooth' })}
-            className="btn-primary hover:scale-105 transition-transform shadow-lg"
+            className="px-6 py-3 border-2 border-secondary text-secondary rounded-lg font-semibold hover:bg-secondary hover:text-white transition-all motion-safe:hover:scale-105 shadow-lg"
           >
             Explore Services
-          </button>
-          <button 
-            onClick={scrollToContact}
-            className="px-6 py-3 border-2 border-secondary text-secondary rounded-lg font-semibold hover:bg-secondary hover:text-white transition-all hover:scale-105 shadow-lg"
-          >
-            Request Demo
           </button>
         </div>
 

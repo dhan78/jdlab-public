@@ -2,8 +2,10 @@ import Header from '@/components/Header'
 import Hero from '@/components/Hero'
 import Services from '@/components/Services'
 import Automation from '@/components/Automation'
+import PortalShowcase from '@/components/PortalShowcase'
 import GlobalReach from '@/components/GlobalReach'
 import Resources from '@/components/Resources'
+import Testimonials from '@/components/Testimonials'
 import ContactForm from '@/components/ContactForm'
 import Footer from '@/components/Footer'
 import PageBackground from '@/components/PageBackground'
@@ -16,8 +18,10 @@ export default function Home() {
       <Hero />
       <Services />
       <Automation />
+      <PortalShowcase />
       <GlobalReach />
       <Resources />
+      <Testimonials />
       <ContactForm />
       <Footer />
     </div>

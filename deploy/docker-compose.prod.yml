@@ -19,7 +19,7 @@
 services:
   # --- jdlab.us website (this repo; Next.js standalone -> `node server.js`) ---
   nextjs:
-    image: ghcr.io/dhan78/jdlab:latest
+    image: ghcr.io/dhan78/jdlab-public:latest
     container_name: jdlab-nextjs
     restart: unless-stopped
     env_file: [/run/jdlab/nextjs.env]      # SSM /jdlab/  (DATABASE_URL, PORTAL_JWT_SECRET, S3_*, AZURE_*)

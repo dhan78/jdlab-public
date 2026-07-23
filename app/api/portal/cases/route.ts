@@ -7,6 +7,7 @@ import {
   listCasesForDoctor,
   messageCountsByCase,
   getUnreadCounts,
+  getLastViewedMap,
   CASE_TYPES,
   type CaseType,
 } from '@/lib/case-store'
@@ -36,10 +37,12 @@ export async function GET(request: NextRequest) {
 
   const counts = await messageCountsByCase(rows.map(c => c.id))
   const unread = await getUnreadCounts(session.sub, session.role)
+  const lastViewed = await getLastViewedMap(session.sub)
   const cases = rows.map(c => ({
     ...c,
     messageCount: counts[c.id] ?? 0,
     unreadCount: unread[c.id] ?? 0,
+    lastViewedAt: lastViewed[c.id],
   }))
 
   const totalUnread = Object.values(unread).reduce((a, b) => a + b, 0)
