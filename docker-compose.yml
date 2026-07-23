@@ -1,20 +1,59 @@
 services:
+  postgres:
+    # Corporate-mirrored standard Postgres 17 (docker.io is blocked; pulled via
+    # the container-external proxy).
+    image: containerregistry-na.jpmchase.net/container-external/docker.io/postgres:17.5
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jdlab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jdlab}
+      POSTGRES_DB: ${POSTGRES_DB:-jdlab}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Exposed to host for local dev / drizzle-kit. Remove in a locked-down prod.
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jdlab} -d ${POSTGRES_DB:-jdlab}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   nextjs:
-    build: .
+    build:
+      context: .
+      args:
+        PORTAL_JWT_SECRET: ${PORTAL_JWT_SECRET}
     restart: unless-stopped
     expose:
       - "3000"
+    ports:
+      - "3005:3000"   # direct access for local testing (Caddy fronts :3000 in prod)
     environment:
       - NODE_ENV=production
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-jdlab}:${POSTGRES_PASSWORD:-jdlab}@postgres:5432/${POSTGRES_DB:-jdlab}
+      - PORTAL_JWT_SECRET=${PORTAL_JWT_SECRET}
+      - PORTAL_ADMIN_EMAIL=${PORTAL_ADMIN_EMAIL:-}
+      - PORTAL_ADMIN_NAME=${PORTAL_ADMIN_NAME:-}
+      - PORTAL_ADMIN_PASSWORD=${PORTAL_ADMIN_PASSWORD:-}
+      # S3 attachment storage (unset -> falls back to base64 in Postgres).
+      # Credentials come from the EC2 instance IAM role — no keys needed.
+      - S3_BUCKET=${S3_BUCKET:-}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_KEY_PREFIX=${S3_KEY_PREFIX:-case-attachments/}
+    depends_on:
+      postgres:
+        condition: service_healthy
     deploy:
       resources:
         limits:
-          memory: 256m
+          memory: 512m
         reservations:
           memory: 128m
 
   caddy:
     image: caddy:2-alpine
+    profiles: ["proxy"]   # opt-in: `docker compose --profile proxy up`
     restart: unless-stopped
     ports:
       - "80:80"
@@ -28,5 +67,6 @@ services:
       - nextjs
 
 volumes:
+  postgres_data:   # Persists the database across restarts
   caddy_data:      # Stores SSL certificates (persists across restarts)
   caddy_config:

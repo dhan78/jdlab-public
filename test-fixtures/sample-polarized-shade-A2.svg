@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <rect width="800" height="600" fill="#1a1a1a"/>
+  <!-- matte, glare-free cross-polarized look: dark neutral background -->
+  <text x="24" y="40" fill="#e8e8e8" font-family="Segoe UI, Arial" font-size="22" font-weight="700">CROSS-POLARIZED — Tooth #8</text>
+  <text x="24" y="68" fill="#9aa0a6" font-family="Segoe UI, Arial" font-size="16">Shade reference: A2 body · incisal translucency · mesial white spot</text>
+
+  <!-- central incisor #8 -->
+  <g transform="translate(300,120)">
+    <defs>
+      <linearGradient id="tooth" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#e9dcc2"/>
+        <stop offset="60%" stop-color="#dccba6"/>
+        <stop offset="88%" stop-color="#cbb98f"/>
+        <stop offset="100%" stop-color="#bcae9c" stop-opacity="0.6"/>
+      </linearGradient>
+    </defs>
+    <path d="M40 20 Q120 0 200 20 Q210 200 160 360 Q120 400 80 360 Q30 200 40 20 Z" fill="url(#tooth)" stroke="#a89b7a" stroke-width="2"/>
+    <!-- incisal translucency band -->
+    <path d="M60 320 Q120 360 180 320 Q160 380 120 392 Q80 380 60 320 Z" fill="#8fb7c4" opacity="0.35"/>
+    <!-- mesial white spot -->
+    <ellipse cx="95" cy="150" rx="16" ry="22" fill="#f6f3ea" opacity="0.85"/>
+  </g>
+
+  <!-- VITA shade tab -->
+  <g transform="translate(70,180)">
+    <rect x="0" y="0" width="120" height="240" rx="8" fill="#dccba6" stroke="#000" stroke-width="1"/>
+    <rect x="0" y="200" width="120" height="40" rx="0" fill="#111"/>
+    <text x="60" y="226" fill="#fff" font-family="Segoe UI, Arial" font-size="20" font-weight="700" text-anchor="middle">A2</text>
+  </g>
+  <text x="70" y="450" fill="#9aa0a6" font-family="Segoe UI, Arial" font-size="14">Shade tab (reference)</text>
+
+  <text x="24" y="576" fill="#5f6368" font-family="Segoe UI, Arial" font-size="13">SYNTHETIC TEST FIXTURE — not a real patient image</text>
+</svg>

@@ -13,7 +13,7 @@ export interface SessionPayload {
   sub: string
   email: string
   name: string
-  role: 'doctor' | 'admin'
+  role: 'doctor' | 'planner' | 'admin'
 }
 
 export interface ResetTokenPayload {
@@ -30,12 +30,12 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
   return bcrypt.compare(password, hash)
 }
 
-// Session JWT utilities (8h expiry)
+// Session JWT utilities (7-day expiry)
 export async function createSessionToken(payload: SessionPayload): Promise<string> {
   return new SignJWT({ ...payload })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
-    .setExpirationTime('8h')
+    .setExpirationTime('7d')
     .sign(JWT_SECRET)
 }
 
@@ -46,7 +46,7 @@ export async function verifySessionToken(token: string): Promise<SessionPayload 
       sub: payload.sub as string,
       email: payload.email as string,
       name: payload.name as string,
-      role: payload.role as 'doctor' | 'admin',
+      role: payload.role as 'doctor' | 'planner' | 'admin',
     }
   } catch {
     return null

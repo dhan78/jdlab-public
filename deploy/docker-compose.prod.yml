@@ -1,0 +1,152 @@
+# JD Dental Lab — production stack (EC2 + Docker/Podman Compose)
+#
+# Secrets come from AWS SSM Parameter Store, resolved on the HOST by
+# jdlab-env.sh into /run/jdlab/*.env (tmpfs, 0600, root-only) and injected via
+# `env_file`. Images stay lean (no AWS CLI baked in), no `eval`, no ~/.aws mounts.
+#
+# Box prerequisites:
+#   1. EC2 instance IAM role with:
+#        ssm:GetParametersByPath  on  arn:aws:ssm:REGION:ACCT:parameter/jdlab/*
+#        (SecureString uses the free AWS-managed key `aws/ssm` — no CMK, no cost)
+#   2. IMDSv2 hop limit = 2  (so CONTAINERS can use the role for S3):
+#        aws ec2 modify-instance-metadata-options --instance-id <id> \
+#          --http-put-response-hop-limit 2 --http-tokens required
+#   3. Run ./jdlab-env.sh  BEFORE  `docker compose up -d`
+#
+# Deploy:   ./jdlab-env.sh && docker compose -f docker-compose.prod.yml up -d
+# Hotfix:   overwrite param in SSM -> ./jdlab-env.sh -> up -d --force-recreate <svc>
+
+services:
+  # --- jdlab.us website (this repo; Next.js standalone -> `node server.js`) ---
+  nextjs:
+    image: ghcr.io/dhan78/jdlab:latest
+    container_name: jdlab-nextjs
+    restart: unless-stopped
+    env_file: [/run/jdlab/nextjs.env]      # SSM /jdlab/  (DATABASE_URL, PORTAL_JWT_SECRET, S3_*, AZURE_*)
+    environment:
+      - AWS_REGION=us-east-1
+    expose: ["3000"]
+    depends_on:
+      db: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+    deploy:
+      resources:
+        limits: { memory: 512m }
+        reservations: { memory: 256m }
+
+  # --- Shared Postgres (serves jdlab, prostore, outline — each its OWN database) ---
+  db:
+    image: postgres:18.3
+    container_name: postgres-prostore
+    restart: always
+    env_file: [/run/jdlab/db.env]          # SSM /jdlab/db/  (POSTGRES_USER/PASSWORD/DB, JDLAB_DB_PASSWORD, OUTLINE_DB_PASSWORD, S3_BUCKET_URL)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data:z     # PGDATA subdir (not the parent)
+      - ./initdb:/docker-entrypoint-initdb.d:ro,z    # first-boot: create jdlab + outline roles/DBs
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-neondb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --- shop.jdlab.us (Prostore) ---
+  app:
+    image: ghcr.io/dhan78/prostore:latest
+    container_name: prostore-app
+    restart: unless-stopped
+    env_file: [/run/jdlab/prostore.env]    # SSM /jdlab/prostore/
+    environment:
+      - AWS_REGION=us-east-1
+      - AUTH_TRUST_HOST=true
+    expose: ["3000"]
+    depends_on:
+      db: { condition: service_healthy }
+
+  # --- docs.jdlab.us (Outline) ---
+  outline:
+    image: outlinewiki/outline:latest
+    container_name: outline
+    restart: unless-stopped
+    env_file: [/run/jdlab/outline.env]     # SSM /jdlab/outline/  (SECRET_KEY, UTILS_SECRET, DATABASE_URL, URL, ...)
+    environment:
+      - REDIS_URL=redis://outline-redis:6379
+    expose: ["3000"]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  redis:
+    image: redis:alpine
+    container_name: outline-redis
+    restart: unless-stopped
+    expose: ["6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # --- Reverse proxy + automatic HTTPS ---
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro,z
+      - caddy_data:/data:z
+      - caddy_config:/config:z
+    depends_on:
+      - nextjs
+      - app
+      - outline
+
+  # --- Daily Postgres backup -> S3 (uses the instance role via IMDS) ---
+  db-backup:
+    image: postgres:18-alpine
+    container_name: postgres-backup
+    restart: unless-stopped
+    env_file: [/run/jdlab/db.env]          # POSTGRES_USER/PASSWORD + S3_BUCKET_URL from SSM
+    environment:
+      - AWS_REGION=us-east-1
+    volumes:
+      - ./backups:/backups:z
+    depends_on:
+      db: { condition: service_healthy }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        command -v aws >/dev/null 2>&1 || apk add --no-cache aws-cli >/dev/null
+        export PGPASSWORD="$${POSTGRES_PASSWORD}"
+        echo "=== backup loop started ==="
+        while true; do
+          DATE=$$(date +%Y-%m-%d_%H-%M-%S)
+          FILE="/backups/full_backup-$${DATE}.sql.gz"
+          echo "[$$(date)] dumping from postgres-prostore..."
+          if pg_dumpall -h postgres-prostore -U "$${POSTGRES_USER:-postgres}" --clean --if-exists | gzip > "$$FILE"; then
+            echo "OK dump $$(du -h "$$FILE" | cut -f1)"
+            if [ -n "$${S3_BUCKET_URL}" ] && aws s3 cp "$$FILE" "$${S3_BUCKET_URL%/}/"; then
+              echo "OK uploaded to S3"
+            else
+              echo "WARN S3 upload skipped/failed"
+            fi
+          else
+            echo "ERR dump failed"; rm -f "$$FILE"
+          fi
+          find /backups -name 'full_backup-*.sql.gz' -mtime +7 -delete
+          sleep 86400
+        done
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

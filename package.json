@@ -7,30 +7,42 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:seed": "tsx --env-file=.env.local lib/db/seed.ts",
+    "db:set-admin-password": "tsx --env-file=.env.local scripts/set-admin-password.ts",
+    "outline:publish": "tsx --env-file=.env.local scripts/publish-to-outline.ts",
+    "outline:import": "tsx --env-file=.env.local scripts/import-from-outline.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1081.0",
+    "@aws-sdk/s3-request-presigner": "^3.1080.0",
     "@azure/identity": "^4.13.0",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "axios": "^1.6.0",
     "bcryptjs": "^3.0.3",
+    "drizzle-orm": "^0.45.2",
     "jose": "^6.2.2",
     "next": "^15.0.0",
+    "pg": "^8.22.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^3.0.0",
     "@types/node": "^20.0.0",
+    "@types/pg": "^8.20.0",
     "@types/react": "^18.0.0",
     "@types/react-dom": "^18.0.0",
     "autoprefixer": "^10.4.0",
+    "dotenv": "^17.4.2",
+    "drizzle-kit": "^0.31.10",
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.0",
-    "typescript": "^5.3.0"
-  },
-"pnpm": {
-    "onlyBuiltDependencies": [
-      "sharp"
-    ]
-  }}
+    "tsx": "^4.23.0",
+    "typescript": "^5.3.0",
+    "vitest": "^4.1.10"
+  }
+}

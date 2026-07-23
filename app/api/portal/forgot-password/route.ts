@@ -3,6 +3,8 @@ import { findDoctorByEmail } from '@/lib/portal-store'
 import { createResetToken } from '@/lib/portal-auth'
 import { addResetToken } from '@/lib/portal-store'
 import { sendPasswordResetEmail } from '@/lib/email'
+import { recordAudit } from '@/lib/audit'
+import { clientIp } from '@/lib/rate-limit'
 
 // In-memory rate limiting: 3 requests per email per hour
 const resetAttempts = new Map<string, { count: number; resetAt: number }>()
@@ -51,7 +53,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(SUCCESS_RESPONSE)
   }
 
-  const doctor = findDoctorByEmail(email)
+  const doctor = await findDoctorByEmail(email)
   if (!doctor) {
     return NextResponse.json(SUCCESS_RESPONSE)
   }
@@ -59,7 +61,9 @@ export async function POST(request: NextRequest) {
   const token = await createResetToken(doctor.id)
   const expiresAt = new Date(Date.now() + 3_600_000).toISOString()
 
-  addResetToken({ token, doctorId: doctor.id, expiresAt, used: false })
+  await addResetToken({ token, doctorId: doctor.id, expiresAt, used: false })
+
+  await recordAudit({ actorId: doctor.id, actorRole: doctor.role, action: 'password.reset_request', ip: clientIp(request) })
 
   // Send email (fire-and-forget — don't reveal errors to client)
   sendPasswordResetEmail({

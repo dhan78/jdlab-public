@@ -24,7 +24,7 @@ export default async function PortalAuthenticatedLayout({
   return (
     <div className="min-h-screen flex flex-col">
       <PortalHeader name={session.name} email={session.email} role={session.role} />
-      <main className="flex-1">
+      <main className="flex-1 bg-slate-50">
         {children}
       </main>
       <Footer />

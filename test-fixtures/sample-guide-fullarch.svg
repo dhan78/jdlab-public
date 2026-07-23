@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <defs>
+    <linearGradient id="bg3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2b6cb0"/>
+      <stop offset="100%" stop-color="#123a66"/>
+    </linearGradient>
+    <linearGradient id="bone3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#d9b25e"/>
+      <stop offset="100%" stop-color="#a9772f"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="600" fill="url(#bg3)"/>
+  <text x="24" y="40" fill="#eaf2ff" font-family="Segoe UI, Arial" font-size="22" font-weight="700">SURGICAL GUIDE — Full-arch (maxilla)</text>
+  <text x="24" y="66" fill="#bcd3f0" font-family="Segoe UI, Arial" font-size="15">6 x Nobel implant sleeves + fixation pins · edentulous</text>
+
+  <!-- broad edentulous ridge -->
+  <path d="M400 140
+           C230 140 160 250 160 360
+           C160 460 230 510 300 510
+           M400 140
+           C570 140 640 250 640 360
+           C640 460 570 510 500 510"
+        fill="none" stroke="url(#bone3)" stroke-width="90" stroke-linecap="round"/>
+  <path d="M400 140
+           C230 140 160 250 160 360
+           C160 460 230 510 300 510
+           M400 140
+           C570 140 640 250 640 360
+           C640 460 570 510 500 510"
+        fill="none" stroke="#37d67a" stroke-width="30" stroke-linecap="round" opacity="0.5"/>
+
+  <!-- 6 implant sleeves around the arch -->
+  <g>
+    <g transform="translate(230,320)"><rect x="-13" y="0" width="26" height="66" rx="6" fill="#e8b93a" stroke="#7a5a10" stroke-width="2"/><ellipse cy="0" rx="13" ry="6" fill="#fbe08a"/></g>
+    <g transform="translate(300,180)"><rect x="-13" y="0" width="26" height="66" rx="6" fill="#e8b93a" stroke="#7a5a10" stroke-width="2"/><ellipse cy="0" rx="13" ry="6" fill="#fbe08a"/></g>
+    <g transform="translate(400,150)"><rect x="-13" y="0" width="26" height="66" rx="6" fill="#e8b93a" stroke="#7a5a10" stroke-width="2"/><ellipse cy="0" rx="13" ry="6" fill="#fbe08a"/></g>
+    <g transform="translate(500,180)"><rect x="-13" y="0" width="26" height="66" rx="6" fill="#e8b93a" stroke="#7a5a10" stroke-width="2"/><ellipse cy="0" rx="13" ry="6" fill="#fbe08a"/></g>
+    <g transform="translate(570,320)"><rect x="-13" y="0" width="26" height="66" rx="6" fill="#e8b93a" stroke="#7a5a10" stroke-width="2"/><ellipse cy="0" rx="13" ry="6" fill="#fbe08a"/></g>
+    <!-- fixation pin -->
+    <g transform="translate(400,430)"><rect x="-8" y="0" width="16" height="50" rx="4" fill="#ff5a5f" stroke="#7a1013" stroke-width="2"/><ellipse cy="0" rx="8" ry="4" fill="#ff9a9d"/></g>
+  </g>
+  <text x="400" y="470" fill="#ffd9d9" font-family="Segoe UI, Arial" font-size="13" text-anchor="middle">fixation pin</text>
+
+  <text x="24" y="576" fill="#9db8dd" font-family="Segoe UI, Arial" font-size="13">SYNTHETIC TEST FIXTURE — not a real patient case</text>
+</svg>

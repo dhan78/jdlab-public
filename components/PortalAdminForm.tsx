@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Fragment } from 'react'
+import AddressBook from './AddressBook'
 
 interface DoctorRow {
   id: string
@@ -25,11 +26,80 @@ export default function PortalAdminForm() {
   const [practiceName, setPracticeName] = useState('')
   const [practiceAddress, setPracticeAddress] = useState('')
   const [phone, setPhone] = useState('')
+  const [role, setRole] = useState<'doctor' | 'planner'>('doctor')
   const [formError, setFormError] = useState('')
   const [formSuccess, setFormSuccess] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   const [deleteStatus, setDeleteStatus] = useState<Record<string, string>>({})
+
+  // --- Inline edit state ---
+  interface EditForm {
+    name: string
+    email: string
+    phone: string
+    practiceName: string
+    role: 'doctor' | 'planner'
+    password: string
+  }
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState<EditForm | null>(null)
+  const [editSaving, setEditSaving] = useState(false)
+  const [editError, setEditError] = useState('')
+
+  const startEdit = (doctor: DoctorRow) => {
+    setEditError('')
+    setEditingId(doctor.id)
+    setEditForm({
+      name: doctor.name,
+      email: doctor.email,
+      phone: doctor.phone ?? '',
+      practiceName: doctor.practiceName ?? '',
+      role: doctor.role === 'planner' ? 'planner' : 'doctor',
+      password: '',
+    })
+  }
+
+  const cancelEdit = () => {
+    setEditingId(null)
+    setEditForm(null)
+    setEditError('')
+  }
+
+  const patchEditForm = (patch: Partial<EditForm>) => {
+    setEditForm(prev => (prev ? { ...prev, ...patch } : prev))
+  }
+
+  const handleEditSave = async (id: string) => {
+    if (!editForm) return
+    setEditSaving(true)
+    setEditError('')
+    try {
+      const res = await fetch(`/api/portal/doctors/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editForm.name.trim(),
+          email: editForm.email.trim(),
+          phone: editForm.phone.trim(),
+          practiceName: editForm.practiceName.trim(),
+          role: editForm.role,
+          ...(editForm.password ? { password: editForm.password } : {}),
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setDoctors(prev => prev.map(d => (d.id === id ? { ...d, ...data.doctor } : d)))
+        cancelEdit()
+      } else {
+        setEditError(data.error ?? 'Failed to save changes.')
+      }
+    } catch {
+      setEditError('An unexpected error occurred.')
+    } finally {
+      setEditSaving(false)
+    }
+  }
 
   // Auto-fill password with email unless admin has manually changed it
   const handleEmailChange = (val: string) => {
@@ -70,6 +140,7 @@ export default function PortalAdminForm() {
           name: name.trim(),
           email: email.trim(),
           password,
+          role,
           practiceName: practiceName.trim() || undefined,
           practiceAddress: practiceAddress.trim() || undefined,
           phone: phone.trim() || undefined,
@@ -86,6 +157,7 @@ export default function PortalAdminForm() {
         setPracticeName('')
         setPracticeAddress('')
         setPhone('')
+        setRole('doctor')
         fetchDoctors()
       } else {
         setFormError(data.error ?? 'Failed to add doctor.')
@@ -212,6 +284,21 @@ export default function PortalAdminForm() {
           </div>
 
           <div>
+            <label htmlFor="add-role" className="block text-sm font-semibold text-gray-700 mb-1">
+              Role
+            </label>
+            <select
+              id="add-role"
+              value={role}
+              onChange={e => setRole(e.target.value as 'doctor' | 'planner')}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-primary bg-white"
+            >
+              <option value="doctor">Doctor</option>
+              <option value="planner">Planner (offshore lab)</option>
+            </select>
+          </div>
+
+          <div>
             <label htmlFor="add-password" className="block text-sm font-semibold text-gray-700 mb-1">
               Initial Password
             </label>
@@ -275,7 +362,8 @@ export default function PortalAdminForm() {
               </thead>
               <tbody>
                 {doctors.map((doctor, i) => (
-                  <tr key={doctor.id} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                  <Fragment key={doctor.id}>
+                  <tr className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
                     <td className="px-4 py-3 font-medium">{doctor.name}</td>
                     <td className="px-4 py-3">{doctor.email}</td>
                     <td className="px-4 py-3">{doctor.phone ?? <span className="text-gray-400">—</span>}</td>
@@ -287,7 +375,15 @@ export default function PortalAdminForm() {
                     <td className="px-4 py-3">{new Date(doctor.createdAt).toLocaleDateString()}</td>
                     <td className="px-4 py-3">
                       {doctor.role !== 'admin' ? (
-                        <div>
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => (editingId === doctor.id ? cancelEdit() : startEdit(doctor))}
+                            className="text-primary hover:text-primary/80 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
+                            aria-label={`Edit ${doctor.name}`}
+                            aria-expanded={editingId === doctor.id}
+                          >
+                            {editingId === doctor.id ? 'Close' : 'Edit'}
+                          </button>
                           <button
                             onClick={() => handleDelete(doctor.id)}
                             disabled={deleteStatus[doctor.id] === 'deleting'}
@@ -310,6 +406,116 @@ export default function PortalAdminForm() {
                       )}
                     </td>
                   </tr>
+                  {editingId === doctor.id && editForm && (
+                    <tr className="bg-primary/5">
+                      <td colSpan={7} className="px-4 py-5">
+                        <div
+                          role="alert"
+                          aria-live="polite"
+                          className={editError ? 'mb-4 p-3 rounded-lg bg-red-50 border border-red-300 text-red-700 text-sm' : 'sr-only'}
+                        >
+                          {editError || ''}
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div>
+                            <label htmlFor={`edit-name-${doctor.id}`} className="block text-sm font-semibold text-gray-700 mb-1">Full Name</label>
+                            <input
+                              id={`edit-name-${doctor.id}`}
+                              type="text"
+                              value={editForm.name}
+                              onChange={e => patchEditForm({ name: e.target.value })}
+                              maxLength={200}
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-primary"
+                            />
+                          </div>
+                          <div>
+                            <label htmlFor={`edit-email-${doctor.id}`} className="block text-sm font-semibold text-gray-700 mb-1">Email Address</label>
+                            <input
+                              id={`edit-email-${doctor.id}`}
+                              type="email"
+                              value={editForm.email}
+                              onChange={e => patchEditForm({ email: e.target.value })}
+                              maxLength={254}
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-primary"
+                            />
+                          </div>
+                          <div>
+                            <label htmlFor={`edit-phone-${doctor.id}`} className="block text-sm font-semibold text-gray-700 mb-1">Phone</label>
+                            <input
+                              id={`edit-phone-${doctor.id}`}
+                              type="tel"
+                              value={editForm.phone}
+                              onChange={e => patchEditForm({ phone: e.target.value })}
+                              maxLength={30}
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-primary"
+                            />
+                          </div>
+                          <div className="md:col-span-2">
+                            <label htmlFor={`edit-practice-name-${doctor.id}`} className="block text-sm font-semibold text-gray-700 mb-1">Practice Name</label>
+                            <input
+                              id={`edit-practice-name-${doctor.id}`}
+                              type="text"
+                              value={editForm.practiceName}
+                              onChange={e => patchEditForm({ practiceName: e.target.value })}
+                              maxLength={200}
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-primary"
+                            />
+                          </div>
+                          <div>
+                            <label htmlFor={`edit-role-${doctor.id}`} className="block text-sm font-semibold text-gray-700 mb-1">Role</label>
+                            <select
+                              id={`edit-role-${doctor.id}`}
+                              value={editForm.role}
+                              onChange={e => patchEditForm({ role: e.target.value as 'doctor' | 'planner' })}
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-primary bg-white"
+                            >
+                              <option value="doctor">Doctor</option>
+                              <option value="planner">Planner (offshore lab)</option>
+                            </select>
+                          </div>
+                          <div className="md:col-span-2">
+                            <label htmlFor={`edit-password-${doctor.id}`} className="block text-sm font-semibold text-gray-700 mb-1">New Password</label>
+                            <input
+                              id={`edit-password-${doctor.id}`}
+                              type="text"
+                              value={editForm.password}
+                              onChange={e => patchEditForm({ password: e.target.value })}
+                              minLength={8}
+                              maxLength={128}
+                              placeholder="Leave blank to keep current password"
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-primary font-mono text-sm"
+                              aria-describedby={`edit-password-hint-${doctor.id}`}
+                            />
+                            <p id={`edit-password-hint-${doctor.id}`} className="text-xs text-gray-400 mt-1">Min 8 characters. Leave blank to keep the current password.</p>
+                          </div>
+                          <div className="md:col-span-3">
+                            <h4 className="text-sm font-semibold text-gray-700 mb-2">Practice / Ship-to Addresses</h4>
+                            <AddressBook doctorId={doctor.id} />
+                          </div>
+                          <div className="md:col-span-3 flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => handleEditSave(doctor.id)}
+                              disabled={editSaving}
+                              className="btn-primary px-6 py-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                              aria-busy={editSaving}
+                            >
+                              {editSaving ? 'Saving…' : 'Save Changes'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelEdit}
+                              disabled={editSaving}
+                              className="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 rounded-lg disabled:opacity-60"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

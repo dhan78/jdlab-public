@@ -1,15 +1,26 @@
-import { hashPassword } from './portal-auth'
+import { db } from './db'
+import { users, passwordResetTokens, practiceAddresses } from './db/schema'
+import { and, asc, desc, eq, gt } from 'drizzle-orm'
 
 export interface Doctor {
   id: string
   name: string
   email: string
   passwordHash: string
-  role: 'doctor' | 'admin'
+  role: 'doctor' | 'planner' | 'admin'
   createdAt: string
   practiceName?: string
   practiceAddress?: string
   phone?: string
+}
+
+export interface PracticeAddress {
+  id: string
+  userId: string
+  label?: string
+  address: string
+  isPreferred: boolean
+  createdAt: string
 }
 
 export interface PasswordResetToken {
@@ -19,91 +30,299 @@ export interface PasswordResetToken {
   used: boolean
 }
 
-const doctors: Doctor[] = []
-const resetTokens: PasswordResetToken[] = []
+type UserRow = typeof users.$inferSelect
 
-// Seed admin account on module load
-async function seedAdmin() {
-  const email = process.env.PORTAL_ADMIN_EMAIL
-  const password = process.env.PORTAL_ADMIN_PASSWORD
-  const name = process.env.PORTAL_ADMIN_NAME
+// Parse a stringified id back to the integer PK; NaN-safe (returns -1 so it
+// simply matches nothing rather than throwing).
+function toIntId(v: string | number): number {
+  const n = typeof v === 'number' ? v : parseInt(v, 10)
+  return Number.isInteger(n) ? n : -1
+}
 
-  if (!email || !password || !name) return
+function toDoctor(row: UserRow): Doctor {
+  return {
+    id: String(row.id),
+    name: row.name,
+    email: row.email,
+    passwordHash: row.passwordHash,
+    role: row.role as Doctor['role'],
+    createdAt: row.createdAt.toISOString(),
+    practiceName: row.practiceName ?? undefined,
+    practiceAddress: row.practiceAddress ?? undefined,
+    phone: row.phone ?? undefined,
+  }
+}
 
-  const existing = doctors.find(d => d.email.toLowerCase() === email.toLowerCase())
-  if (existing) return
+// --- Doctor / user helpers ---
 
-  const passwordHash = await hashPassword(password)
-  doctors.push({
-    id: crypto.randomUUID(),
-    name,
-    email,
-    passwordHash,
-    role: 'admin',
-    createdAt: new Date().toISOString(),
+export async function addDoctor(doctor: Omit<Doctor, 'id' | 'createdAt'>): Promise<Doctor> {
+  const [row] = await db
+    .insert(users)
+    .values({
+      name: doctor.name,
+      email: doctor.email.trim().toLowerCase(),
+      passwordHash: doctor.passwordHash,
+      role: doctor.role,
+      practiceName: doctor.practiceName ?? null,
+      practiceAddress: doctor.practiceAddress ?? null,
+      phone: doctor.phone ?? null,
+    })
+    .returning()
+  // Seed the addresses table with the initial address as the preferred one.
+  if (doctor.practiceAddress && doctor.practiceAddress.trim()) {
+    await addPracticeAddress({ userId: String(row.id), address: doctor.practiceAddress, isPreferred: true })
+  }
+  return toDoctor(row)
+}
+
+export async function findDoctorByEmail(email: string): Promise<Doctor | undefined> {
+  const [row] = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, email.trim().toLowerCase()))
+    .limit(1)
+  return row ? toDoctor(row) : undefined
+}
+
+export async function findDoctorById(id: string): Promise<Doctor | undefined> {
+  const [row] = await db.select().from(users).where(eq(users.id, toIntId(id))).limit(1)
+  return row ? toDoctor(row) : undefined
+}
+
+export async function removeDoctorById(id: string): Promise<boolean> {
+  const rows = await db.delete(users).where(eq(users.id, toIntId(id))).returning({ id: users.id })
+  return rows.length > 0
+}
+
+export async function listDoctors(): Promise<Doctor[]> {
+  const rows = await db.select().from(users).orderBy(desc(users.createdAt))
+  return rows.map(toDoctor)
+}
+
+export async function updateDoctorPassword(id: string, passwordHash: string): Promise<boolean> {
+  const rows = await db
+    .update(users)
+    .set({ passwordHash })
+    .where(eq(users.id, toIntId(id)))
+    .returning({ id: users.id })
+  return rows.length > 0
+}
+
+// Update editable profile fields (and optionally the password hash). Only keys
+// present in `fields` are changed; empty strings clear the optional columns.
+export async function updateDoctor(
+  id: string,
+  fields: Partial<
+    Pick<
+      Doctor,
+      'name' | 'email' | 'role' | 'practiceName' | 'practiceAddress' | 'phone' | 'passwordHash'
+    >
+  >
+): Promise<Doctor | undefined> {
+  const set: Partial<typeof users.$inferInsert> = {}
+  if (fields.name !== undefined) set.name = fields.name
+  if (fields.email !== undefined) set.email = fields.email.trim().toLowerCase()
+  if (fields.role !== undefined) set.role = fields.role
+  if (fields.practiceName !== undefined) set.practiceName = fields.practiceName || null
+  if (fields.practiceAddress !== undefined) set.practiceAddress = fields.practiceAddress || null
+  if (fields.phone !== undefined) set.phone = fields.phone || null
+  if (fields.passwordHash !== undefined) set.passwordHash = fields.passwordHash
+
+  if (Object.keys(set).length === 0) return findDoctorById(id)
+
+  const [row] = await db.update(users).set(set).where(eq(users.id, toIntId(id))).returning()
+  return row ? toDoctor(row) : undefined
+}
+
+// --- Practice addresses (multiple per doctor; exactly one preferred) ---
+
+type PracticeAddressRow = typeof practiceAddresses.$inferSelect
+
+function toPracticeAddress(row: PracticeAddressRow): PracticeAddress {
+  return {
+    id: String(row.id),
+    userId: String(row.userId),
+    label: row.label ?? undefined,
+    address: row.address,
+    isPreferred: row.isPreferred,
+    createdAt: row.createdAt.toISOString(),
+  }
+}
+
+export async function listPracticeAddresses(userId: string): Promise<PracticeAddress[]> {
+  const rows = await db
+    .select()
+    .from(practiceAddresses)
+    .where(eq(practiceAddresses.userId, toIntId(userId)))
+    .orderBy(desc(practiceAddresses.isPreferred), asc(practiceAddresses.id))
+  return rows.map(toPracticeAddress)
+}
+
+// Mirror the preferred address text onto users.practice_address so existing
+// single-address reads (admin list, case sidebar) stay correct.
+async function syncPreferredMirror(userId: string): Promise<void> {
+  const [pref] = await db
+    .select({ address: practiceAddresses.address })
+    .from(practiceAddresses)
+    .where(and(eq(practiceAddresses.userId, toIntId(userId)), eq(practiceAddresses.isPreferred, true)))
+    .limit(1)
+  await db
+    .update(users)
+    .set({ practiceAddress: pref?.address ?? null })
+    .where(eq(users.id, toIntId(userId)))
+}
+
+export async function addPracticeAddress(input: {
+  userId: string
+  address: string
+  label?: string
+  isPreferred?: boolean
+}): Promise<PracticeAddress> {
+  const uid = toIntId(input.userId)
+  // First address for a doctor is always preferred.
+  const existing = await db
+    .select({ id: practiceAddresses.id })
+    .from(practiceAddresses)
+    .where(eq(practiceAddresses.userId, uid))
+  const makePreferred = input.isPreferred || existing.length === 0
+
+  if (makePreferred) {
+    await db
+      .update(practiceAddresses)
+      .set({ isPreferred: false })
+      .where(eq(practiceAddresses.userId, uid))
+  }
+
+  const [row] = await db
+    .insert(practiceAddresses)
+    .values({
+      userId: uid,
+      address: input.address.trim(),
+      label: input.label?.trim() || null,
+      isPreferred: makePreferred,
+    })
+    .returning()
+
+  await syncPreferredMirror(input.userId)
+  return toPracticeAddress(row)
+}
+
+export async function updatePracticeAddress(
+  userId: string,
+  addressId: string,
+  fields: { address?: string; label?: string; isPreferred?: boolean }
+): Promise<PracticeAddress | undefined> {
+  const uid = toIntId(userId)
+  const aid = toIntId(addressId)
+
+  const set: Partial<typeof practiceAddresses.$inferInsert> = {}
+  if (fields.address !== undefined) set.address = fields.address.trim()
+  if (fields.label !== undefined) set.label = fields.label.trim() || null
+
+  if (Object.keys(set).length > 0) {
+    await db
+      .update(practiceAddresses)
+      .set(set)
+      .where(and(eq(practiceAddresses.id, aid), eq(practiceAddresses.userId, uid)))
+  }
+
+  // Promoting to preferred clears the flag on siblings.
+  if (fields.isPreferred === true) {
+    await db
+      .update(practiceAddresses)
+      .set({ isPreferred: false })
+      .where(eq(practiceAddresses.userId, uid))
+    await db
+      .update(practiceAddresses)
+      .set({ isPreferred: true })
+      .where(and(eq(practiceAddresses.id, aid), eq(practiceAddresses.userId, uid)))
+  }
+
+  await syncPreferredMirror(userId)
+
+  const [row] = await db
+    .select()
+    .from(practiceAddresses)
+    .where(and(eq(practiceAddresses.id, aid), eq(practiceAddresses.userId, uid)))
+    .limit(1)
+  return row ? toPracticeAddress(row) : undefined
+}
+
+export async function removePracticeAddress(userId: string, addressId: string): Promise<boolean> {
+  const uid = toIntId(userId)
+  const aid = toIntId(addressId)
+
+  const [removed] = await db
+    .delete(practiceAddresses)
+    .where(and(eq(practiceAddresses.id, aid), eq(practiceAddresses.userId, uid)))
+    .returning({ id: practiceAddresses.id, wasPreferred: practiceAddresses.isPreferred })
+  if (!removed) return false
+
+  // If we deleted the preferred one, promote the oldest remaining address.
+  if (removed.wasPreferred) {
+    const [next] = await db
+      .select({ id: practiceAddresses.id })
+      .from(practiceAddresses)
+      .where(eq(practiceAddresses.userId, uid))
+      .orderBy(asc(practiceAddresses.id))
+      .limit(1)
+    if (next) {
+      await db
+        .update(practiceAddresses)
+        .set({ isPreferred: true })
+        .where(eq(practiceAddresses.id, next.id))
+    }
+  }
+
+  await syncPreferredMirror(userId)
+  return true
+}
+
+// --- Password reset tokens ---
+
+export async function addResetToken(token: PasswordResetToken): Promise<void> {
+  await invalidateResetTokensForDoctor(token.doctorId)
+  await db.insert(passwordResetTokens).values({
+    userId: toIntId(token.doctorId),
+    token: token.token,
+    expiresAt: new Date(token.expiresAt),
+    used: token.used,
   })
 }
 
-// Trigger seed (fire-and-forget; module-level side effect)
-seedAdmin().catch(() => {/* ignore seed errors to avoid blocking module load */})
-
-// Doctor CRUD helpers
-export function addDoctor(doctor: Omit<Doctor, 'id' | 'createdAt'>): Doctor {
-  const newDoctor: Doctor = {
-    ...doctor,
-    id: crypto.randomUUID(),
-    createdAt: new Date().toISOString(),
+export async function findValidResetToken(
+  token: string
+): Promise<PasswordResetToken | undefined> {
+  const [row] = await db
+    .select()
+    .from(passwordResetTokens)
+    .where(
+      and(
+        eq(passwordResetTokens.token, token),
+        eq(passwordResetTokens.used, false),
+        gt(passwordResetTokens.expiresAt, new Date())
+      )
+    )
+    .limit(1)
+  if (!row) return undefined
+  return {
+    token: row.token,
+    doctorId: String(row.userId),
+    expiresAt: row.expiresAt.toISOString(),
+    used: row.used,
   }
-  doctors.push(newDoctor)
-  return newDoctor
 }
 
-export function findDoctorByEmail(email: string): Doctor | undefined {
-  return doctors.find(d => d.email.toLowerCase() === email.toLowerCase())
+export async function invalidateResetTokensForDoctor(doctorId: string): Promise<void> {
+  await db
+    .update(passwordResetTokens)
+    .set({ used: true })
+    .where(eq(passwordResetTokens.userId, toIntId(doctorId)))
 }
 
-export function findDoctorById(id: string): Doctor | undefined {
-  return doctors.find(d => d.id === id)
-}
-
-export function removeDoctorById(id: string): boolean {
-  const index = doctors.findIndex(d => d.id === id)
-  if (index === -1) return false
-  doctors.splice(index, 1)
-  return true
-}
-
-export function listDoctors(): Doctor[] {
-  return [...doctors]
-}
-
-export function updateDoctorPassword(id: string, passwordHash: string): boolean {
-  const doctor = doctors.find(d => d.id === id)
-  if (!doctor) return false
-  doctor.passwordHash = passwordHash
-  return true
-}
-
-// Reset token helpers
-export function addResetToken(token: PasswordResetToken): void {
-  // Invalidate all previous tokens for this doctor
-  invalidateResetTokensForDoctor(token.doctorId)
-  resetTokens.push(token)
-}
-
-export function findValidResetToken(token: string): PasswordResetToken | undefined {
-  return resetTokens.find(
-    t => t.token === token && !t.used && new Date(t.expiresAt) > new Date()
-  )
-}
-
-export function invalidateResetTokensForDoctor(doctorId: string): void {
-  resetTokens
-    .filter(t => t.doctorId === doctorId)
-    .forEach(t => { t.used = true })
-}
-
-export function markResetTokenUsed(token: string): void {
-  const t = resetTokens.find(t => t.token === token)
-  if (t) t.used = true
+export async function markResetTokenUsed(token: string): Promise<void> {
+  await db
+    .update(passwordResetTokens)
+    .set({ used: true })
+    .where(eq(passwordResetTokens.token, token))
 }

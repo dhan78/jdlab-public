@@ -6,7 +6,7 @@ import Logo from './Logo'
 interface PortalHeaderProps {
   name: string
   email: string
-  role: 'doctor' | 'admin'
+  role: 'doctor' | 'planner' | 'admin'
 }
 
 export default function PortalHeader({ name, email, role }: PortalHeaderProps) {
@@ -16,6 +16,9 @@ export default function PortalHeader({ name, email, role }: PortalHeaderProps) {
     await fetch('/api/portal/logout', { method: 'POST' })
     router.push('/portal/login')
   }
+
+  const casesLabel =
+    role === 'doctor' ? 'My Cases' : role === 'planner' ? 'Work Queue' : 'Cases'
 
   return (
     <header className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-50" role="banner">
@@ -29,6 +32,14 @@ export default function PortalHeader({ name, email, role }: PortalHeaderProps) {
         </a>
 
         <div className="flex items-center gap-4">
+          <a
+            href="/portal"
+            className="text-sm font-medium text-primary hover:text-primary/80 transition-colors"
+            aria-label={casesLabel}
+          >
+            {casesLabel}
+          </a>
+
           {role === 'admin' && (
             <a
               href="/portal/admin"
@@ -36,6 +47,16 @@ export default function PortalHeader({ name, email, role }: PortalHeaderProps) {
               aria-label="Admin dashboard"
             >
               Admin
+            </a>
+          )}
+
+          {role === 'doctor' && (
+            <a
+              href="/portal/profile"
+              className="text-sm font-medium text-primary hover:text-primary/80 transition-colors"
+              aria-label="My profile"
+            >
+              Profile
             </a>
           )}
 

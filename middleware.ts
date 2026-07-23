@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { jwtVerify } from 'jose'
+import { jwtVerify, SignJWT } from 'jose'
 
 // Public portal routes that don't require authentication
 const PUBLIC_PORTAL_PATHS = [
@@ -37,10 +37,8 @@ export async function middleware(request: NextRequest) {
   }
 
   try {
-    const { payload } = await jwtVerify(
-      cookieToken,
-      new TextEncoder().encode(secret)
-    )
+    const key = new TextEncoder().encode(secret)
+    const { payload } = await jwtVerify(cookieToken, key)
 
     // Admin-only routes require admin role
     if (pathname.startsWith('/portal/admin') && payload.role !== 'admin') {
@@ -48,8 +46,36 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(loginUrl)
     }
 
-    // Token is valid — pass through
-    return NextResponse.next()
+    // Token is valid — pass through.
+    const response = NextResponse.next()
+
+    // Sliding refresh: re-issue the session with a fresh 7-day window when the
+    // current token is older than the refresh interval, so a doctor who visits
+    // even once a week effectively stays logged in. Throttled to at most once
+    // per hour of activity to avoid re-signing on every navigation.
+    const nowSec = Math.floor(Date.now() / 1000)
+    const iat = typeof payload.iat === 'number' ? payload.iat : 0
+    const REFRESH_AFTER_SEC = 60 * 60 // 1 hour
+    if (nowSec - iat > REFRESH_AFTER_SEC) {
+      const fresh = await new SignJWT({
+        sub: payload.sub,
+        email: payload.email,
+        name: payload.name,
+        role: payload.role,
+      })
+        .setProtectedHeader({ alg: 'HS256' })
+        .setIssuedAt()
+        .setExpirationTime('7d')
+        .sign(key)
+      response.cookies.set('portal-session', fresh, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 60 * 60 * 24 * 7, // 7 days
+        path: '/',
+      })
+    }
+    return response
   } catch (err: unknown) {
     // Distinguish expired vs. invalid token
     const loginUrl = new URL('/portal/login', request.url)
