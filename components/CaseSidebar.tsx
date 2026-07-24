@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { subscribeCaseEvents } from '@/lib/portal-stream'
+import { computeSurgeryReadiness, type SlaConfigMap } from '@/lib/sla'
+import type { CaseType, CaseStatus as CaseStatusMeta } from '@/lib/case-meta'
 
 type CaseStatus = 'received' | 'planning' | 'design' | 'review' | 'shipped'
 
@@ -16,6 +18,11 @@ interface SidebarCase {
   status: CaseStatus
   doctorName?: string
   lastViewedAt?: string
+  // Extra fields (present in the /api/portal/cases payload) used to color the
+  // surgery pill by READINESS rather than raw proximity, matching the list.
+  caseType?: CaseType
+  isRush?: boolean
+  scanReceivedAt?: string
 }
 
 const DOT: Record<CaseStatus, string> = {
@@ -84,6 +91,7 @@ export default function CaseSidebar({
   const [fetched, setFetched] = useState<SidebarCase[] | null>(null)
   const [loading, setLoading] = useState(!provided)
   const [role, setRole] = useState<'doctor' | 'planner' | 'admin'>('doctor')
+  const [slaConfig, setSlaConfig] = useState<SlaConfigMap>({})
 
   // Derive the active case from the URL so the highlight updates instantly on
   // client-side navigation (no full page load). Falls back to the prop for the
@@ -102,6 +110,7 @@ export default function CaseSidebar({
         const data = await res.json()
         setFetched(data.cases ?? [])
         setRole(data.role ?? 'doctor')
+        setSlaConfig(data.slaConfig ?? {})
       } else {
         setFetched([])
       }
@@ -169,6 +178,28 @@ export default function CaseSidebar({
             {recent.map(c => {
               const active = c.id === currentActive
               const cd = c.surgeryDate && c.status !== 'shipped' ? countdown(c.surgeryDate) : null
+              // Color the pill by whether the case will MAKE the surgery (same
+              // logic as the list) — not by how soon surgery is. So a case 5 days
+              // out but on track stays neutral instead of alarming red.
+              const readiness = c.surgeryDate
+                ? computeSurgeryReadiness(
+                    {
+                      caseType: (c.caseType ?? 'guide') as CaseType,
+                      isRush: c.isRush,
+                      status: c.status as unknown as CaseStatusMeta,
+                      scanReceivedAt: c.scanReceivedAt,
+                      surgeryDate: c.surgeryDate,
+                    },
+                    new Date(),
+                    slaConfig
+                  )
+                : null
+              const readinessCls =
+                readiness?.state === 'at-risk'
+                  ? 'bg-amber-50 text-amber-700 ring-amber-200'
+                  : readiness?.state === 'late' || readiness?.state === 'passed'
+                  ? 'bg-red-50 text-red-700 ring-red-200'
+                  : 'bg-slate-100 text-slate-500 ring-slate-200'
               return (
                 <li key={c.id}>
                   <Link
@@ -182,9 +213,12 @@ export default function CaseSidebar({
                   >
                     <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${DOT[c.status]}`} aria-hidden="true" />
                     <span className="min-w-0 flex-1">
-                      <span className={`block text-sm font-medium truncate transition-colors ${
-                        active ? 'text-primary' : 'text-slate-800 group-hover:text-primary'
-                      }`}>
+                      <span
+                        title={c.title}
+                        className={`block text-sm font-medium leading-snug line-clamp-2 transition-colors ${
+                          active ? 'text-primary' : 'text-slate-800 group-hover:text-primary'
+                        }`}
+                      >
                         {c.title}
                       </span>
                       {(c.patientName || c.surgeryDate) && (
@@ -218,9 +252,17 @@ export default function CaseSidebar({
                       </span>
                     ) : cd ? (
                       <span
-                        className={`mt-1 flex-shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset ${cd.cls}`}
-                        title={c.surgeryDate ? `Surgery ${formatDate(c.surgeryDate)}` : undefined}
+                        className={`mt-1 flex-shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset ${readinessCls}`}
+                        title={
+                          c.surgeryDate
+                            ? `Surgery ${formatDate(c.surgeryDate)}${readiness && readiness.state !== 'ready' ? ' · ' + readiness.label : ''}`
+                            : undefined
+                        }
                       >
+                        <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <rect x="3" y="4" width="18" height="17" rx="2" />
+                          <path d="M3 9h18M8 2v4M16 2v4" />
+                        </svg>
                         {cd.text}
                       </span>
                     ) : null}

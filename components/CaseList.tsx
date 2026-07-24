@@ -13,7 +13,7 @@ import {
   type CaseStatus,
   type CaseType,
 } from '@/lib/case-meta'
-import { computeSla, SLA_CHIP, type SlaConfigMap } from '@/lib/sla'
+import { computeSla, SLA_CHIP, computeSurgeryReadiness, READINESS_CHIP, type SlaConfigMap } from '@/lib/sla'
 
 interface CaseRow {
   id: string
@@ -211,6 +211,11 @@ export default function CaseList() {
   const [sortBy, setSortBy] = useState<'recent' | 'surgery'>('recent')
   // View scope: hide shipped by default; 'shipped' shows the archive, 'all' both.
   const [scope, setScope] = useState<'active' | 'shipped' | 'all'>('active')
+  // Scope to return to when the "unread only" focus filter is switched off.
+  // Set when unread-only turns ON (it forces scope to 'all' so unread cases in
+  // shipped/other statuses surface). Cleared if the user manually changes scope
+  // while unread-only is on, so unclicking won't override their explicit choice.
+  const prevScopeRef = useRef<'active' | 'shipped' | 'all' | null>(null)
   // Condense the sticky toolbar once the page is scrolled, to reclaim height.
   const [condensed, setCondensed] = useState(false)
   const [totalUnread, setTotalUnread] = useState(0)
@@ -323,14 +328,28 @@ export default function CaseList() {
   // Restore the "unread only" focus filter within the session, so replying to a
   // case and navigating back keeps the doctor filtered on remaining unread work.
   // Session-scoped (not localStorage) so it doesn't persist into a fresh visit.
+  // Restoring it also widens scope to 'all' so unread cases in any status show.
   useEffect(() => {
     const saved = typeof window !== 'undefined' ? window.sessionStorage.getItem('jdlab.unreadOnly') : null
-    if (saved === '1') setUnreadOnly(true)
+    if (saved === '1') {
+      setUnreadOnly(true)
+      setScope('all')
+    }
   }, [])
 
+  // "Unread only" is a focus mode: turning it ON widens scope to 'all' so unread
+  // messages in shipped/other cases aren't hidden (the badge counts them), and
+  // turning it OFF restores the scope you were on before (default 'active').
   const toggleUnreadOnly = () => {
     setUnreadOnly(v => {
       const next = !v
+      if (next) {
+        prevScopeRef.current = scope
+        setScope('all')
+      } else {
+        setScope(prevScopeRef.current ?? 'active')
+        prevScopeRef.current = null
+      }
       try {
         window.sessionStorage.setItem('jdlab.unreadOnly', next ? '1' : '0')
       } catch {
@@ -338,6 +357,13 @@ export default function CaseList() {
       }
       return next
     })
+  }
+
+  // Scope changes made directly by the user take precedence: forget the
+  // remembered baseline so turning unread-only off later won't override it.
+  const chooseScope = (value: 'active' | 'shipped' | 'all') => {
+    prevScopeRef.current = null
+    setScope(value)
   }
 
   const chooseSort = (value: 'recent' | 'surgery') => {
@@ -465,6 +491,11 @@ export default function CaseList() {
     setStatusFilter('all')
     setTypeFilter('all')
     setRushOnly(false)
+    // If unread-only had widened the scope, fall back to where we were before.
+    if (unreadOnly) {
+      setScope(prevScopeRef.current ?? 'active')
+      prevScopeRef.current = null
+    }
     setUnreadOnly(false)
     try {
       window.sessionStorage.setItem('jdlab.unreadOnly', '0')
@@ -584,7 +615,7 @@ export default function CaseList() {
                     <SegmentedControl
                       ariaLabel="Show cases"
                       value={scope}
-                      onChange={setScope}
+                      onChange={chooseScope}
                       options={[
                         { value: 'active', label: 'Active' },
                         { value: 'shipped', label: 'Shipped' },
@@ -789,6 +820,22 @@ export default function CaseList() {
                                 </span>
                               )}
                               {(() => {
+                                // Surgery-anchored readiness is what the doctor
+                                // actually cares about ("will it arrive before the
+                                // appointment?"). Show it when a surgery date exists;
+                                // otherwise fall back to the lab's turnaround SLA.
+                                if (c.surgeryDate) {
+                                  const r = computeSurgeryReadiness(c, now, slaConfig)
+                                  if (r.state === 'no-date' || r.state === 'delivered') return null
+                                  return (
+                                    <span
+                                      className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ring-1 ring-inset ${READINESS_CHIP[r.state]}`}
+                                      title={r.tooltip}
+                                    >
+                                      {r.label}
+                                    </span>
+                                  )
+                                }
                                 const sla = computeSla(c, now, slaConfig)
                                 if (sla.state === 'shipped') return null
                                 return (
