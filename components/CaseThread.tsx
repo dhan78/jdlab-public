@@ -382,13 +382,18 @@ export default function CaseThread({
 
   useEffect(() => { fetchThread() }, [fetchThread])
 
-  // Lightweight refetch of just the messages (used by the live SSE stream).
-  const refreshMessages = useCallback(async () => {
+  // Silent refetch of the WHOLE case (status + messages + SLA) without the
+  // loading skeleton — used by the live stream and on refocus. Refetching the
+  // full case (not just /messages) means a planner's STATUS change reflects on
+  // the doctor's page live, not only when a new message arrives.
+  const refreshCase = useCallback(async () => {
     try {
-      const res = await fetch(`/api/portal/cases/${caseId}/messages`)
+      const res = await fetch(`/api/portal/cases/${caseId}`)
       if (!res.ok) return
       const data = await res.json()
+      setCaseDetail(data.case)
       setMessages(data.messages ?? [])
+      setSlaConfig(data.slaConfig ?? {})
       markRead() // we're viewing, so keep it read
     } catch {
       /* transient; the stream will prompt again on the next update */
@@ -400,7 +405,7 @@ export default function CaseThread({
   // can be stale — pull the latest messages.
   useEffect(() => {
     const onFocus = () => {
-      if (document.visibilityState === 'visible') void refreshMessages()
+      if (document.visibilityState === 'visible') void refreshCase()
     }
     document.addEventListener('visibilitychange', onFocus)
     window.addEventListener('focus', onFocus)
@@ -408,7 +413,7 @@ export default function CaseThread({
       document.removeEventListener('visibilitychange', onFocus)
       window.removeEventListener('focus', onFocus)
     }
-  }, [refreshMessages])
+  }, [refreshCase])
 
   // Realtime updates via the single shared stream: refetch messages when this
   // case gets a new message, and show the typing indicator. One connection is
@@ -417,7 +422,7 @@ export default function CaseThread({
     const unsub = subscribeCaseEvents(ev => {
       if (ev.caseId !== caseId) return
       if (ev.event === 'update') {
-        void refreshMessages()
+        void refreshCase()
         return
       }
       if (ev.event === 'typing') {
@@ -432,7 +437,7 @@ export default function CaseThread({
       unsub()
       if (typingClearRef.current) clearTimeout(typingClearRef.current)
     }
-  }, [caseId, refreshMessages, currentUserId])
+  }, [caseId, refreshCase, currentUserId])
 
   // Tell the server we're typing — throttled to at most once every 2.5s.
   const notifyTyping = useCallback(() => {
