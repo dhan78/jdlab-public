@@ -40,7 +40,7 @@ export default function Footer() {
           </div>
         </div>
         <div className="border-t border-gray-700 pt-8 text-center text-gray-400">
-          <p>&copy; 2025 JD Dental Lab. All rights reserved.</p>
+          <p>&copy; {new Date().getFullYear()} JD Dental Lab. All rights reserved.</p>
         </div>
       </div>
     </footer>

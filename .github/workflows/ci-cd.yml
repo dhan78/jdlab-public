@@ -8,142 +8,144 @@ on:
   workflow_dispatch: # Enables manual triggering
 
 # Grant permissions required to publish packages and manage package lifecycle history
-permissions:
-  contents: read
-  packages: write  # Critical: Grants permission to delete older container images
+permissions: 
+  contents: read 
+  packages: write  # Critical: Grants permission to delete older container images 
   actions: read    # Required to query past workflow runs via the API
 
 jobs:
   # 1. CI Job: Lint, Build, and Validate the Next.js app locally
-  validate-and-test:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+  validate-and-test: 
+    runs-on: ubuntu-latest 
+    steps: 
+      - name: Checkout Code 
+        uses: actions/checkout@v4
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-        cache: 'npm'
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
 
-    - name: Install Dependencies
-      run: npm ci
+      - name: Install Dependencies
+        run: npm ci --prefer-offline --no-audit --fund=false
 
-    - name: Build Next.js Application
-      run: npm run build
-      env:
-        NEXT_TELEMETRY_DISABLED: '1'
-        PORTAL_JWT_SECRET: ${{ secrets.PORTAL_JWT_SECRET }}
+      # Fast validation only — lint + type-check. The Docker build compiles the
+      # app for real, so we don't run `next build` twice (saves several minutes).
+      - name: Lint
+        run: npm run lint
 
+      - name: Type Check
+        run: npm run type-check
 
   # 2. CD Job: Build Docker Image and Publish to GitHub Container Registry (GHCR)
-  build-and-push-docker:
-    needs: validate-and-test
-    runs-on: ubuntu-latest
-    if: |
+  build-and-push-docker: 
+    needs: validate-and-test 
+    runs-on: ubuntu-24.04-arm 
+    if: | 
       github.ref == 'refs/heads/main' || 
       github.event_name == 'workflow_dispatch' || 
       github.event_name == 'pull_request'
-
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    - name: Generate Custom Dynamic Tag
-      id: calver
-      run: |
-        # Get today's date in YYYYMMDD format
-        TODAY=$(date +'%Y%m%d')
-        
-        # Use the GitHub CLI to count successful runs created today
-        # FIX: Changed --json id to --json databaseId to match latest GitHub CLI schema
-        RUNS_TODAY=$(gh run list \
-          --workflow="${{ github.workflow }}" \
-          --created="$(date +'%Y-%m-%d')" \
-          --status=success \
-          --json databaseId \
-          --jq '. | length')
-        
-        # Add 1 to represent the current incremental run number
-        N=$((RUNS_TODAY + 1))
-        
-        # Extract the branch name cleanly based on the trigger type
-        if [ "${{ github.event_name }}" = "pull_request" ]; then
-          RAW_BRANCH="${{ github.head_ref }}"
-        else
-          RAW_BRANCH="${{ github.ref_name }}"
-        fi
-        
-        # Replace forward slashes with hyphens so the tag is legal in Docker
-        CLEAN_BRANCH=$(echo "$RAW_BRANCH" | sed 's/\//-/g')
-        
-        # Formats layout cleanly to branch-YYYYMMDD.n (e.g., main-20260711.2)
-        BUILD_TAG="${CLEAN_BRANCH}-${TODAY}.${N}"
-        echo "Generated custom release tag: ${BUILD_TAG}"
-        
-        # Save it into the step output variable
-        echo "tag=${BUILD_TAG}" >> $GITHUB_OUTPUT
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate Custom Dynamic Tag
+        id: calver
+        run: |
+          # Get today's date in YYYYMMDD format
+          TODAY=$(date +'%Y%m%d')
+          
+          # Use the GitHub CLI to count successful runs created today
+          # FIX: Changed --json id to --json databaseId to match latest GitHub CLI schema
+          RUNS_TODAY=$(gh run list \
+            --workflow="${{ github.workflow }}" \
+            --created="$(date +'%Y-%m-%d')" \
+            --status=success \
+            --json databaseId \
+            --jq '. | length')
+          
+          # Add 1 to represent the current incremental run number
+          N=$((RUNS_TODAY + 1))
+          
+          # Extract the branch name cleanly based on the trigger type
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RAW_BRANCH="${{ github.head_ref }}"
+          else
+            RAW_BRANCH="${{ github.ref_name }}"
+          fi
+          
+          # Replace forward slashes with hyphens so the tag is legal in Docker
+          CLEAN_BRANCH=$(echo "$RAW_BRANCH" | sed 's/\//-/g')
+          
+          # Formats layout cleanly to branch-YYYYMMDD.n (e.g., main-20260711.2)
+          BUILD_TAG="${CLEAN_BRANCH}-${TODAY}.${N}"
+          echo "Generated custom release tag: ${BUILD_TAG}"
+          
+          # Save it into the step output variable
+          echo "tag=${BUILD_TAG}" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Log in to GitHub Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Extract Metadata for Docker (Tags/Labels)
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ghcr.io/${{ github.repository }}
-        annotations: |
-          org.opencontainers.image.title=JD Dental Lab
-          org.opencontainers.image.description=Next.js 15 marketing site and secure doctors portal for a digital dental & medical-device lab — surgical-guide, crown/bridge and denture case submission with real-time status tracking, SLA deadline alerts, and case messaging.
-          org.opencontainers.image.vendor=JD Dental Lab
-        tags: |
-          type=raw,value=latest
-          type=raw,value=${{ steps.calver.outputs.tag }}
+      - name: Extract Metadata for Docker (Tags/Labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          annotations: |
+            org.opencontainers.image.title=JD Dental Lab
+            org.opencontainers.image.description=Next.js 15 marketing site and secure doctors portal for a digital dental & medical-device lab — surgical-guide, crown/bridge and denture case submission with real-time status tracking, SLA deadline alerts, and case messaging.
+            org.opencontainers.image.vendor=JD Dental Lab
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ steps.calver.outputs.tag }}
 
-    # QEMU + Buildx are required to cross-build linux/arm64 on the amd64 runner.
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
+      # Native arm64 runner — the image target arch matches the host, so no QEMU
+      # emulation is needed (builds run at native speed). Buildx enables the GHA
+      # layer cache and the advanced image output below.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
-    - name: Build and Push Docker Image
-      uses: docker/build-push-action@v6
-      with:
-        context: .
-        platforms: linux/arm64
-        file: ./Dockerfile
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        annotations: ${{ steps.meta.outputs.annotations }}
-        # Push a zstd-compressed image (GHCR supports OCI zstd): smaller layers +
-        # much faster decompression on pull. force-compression re-encodes the
-        # base layers too. push=true here replaces the standalone `push:` input.
-        outputs: type=image,compression=zstd,force-compression=true,push=true
-        build-args: |
-          PORTAL_JWT_SECRET=${{ secrets.PORTAL_JWT_SECRET }}
-
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          file: ./Dockerfile
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          # Cache image layers in the GitHub Actions cache so unchanged layers are
+          # reused on subsequent builds (mode=max caches intermediate layers too).
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Push a zstd-compressed image (GHCR supports OCI zstd): smaller layers +
+          # much faster decompression on pull. Only our own new layers are
+          # compressed — base layers keep their existing compression, so they aren't
+          # re-encoded on every build. push=true replaces the standalone `push:`.
+          outputs: type=image,compression=zstd,push=true
+          build-args: |
+            PORTAL_JWT_SECRET=${{ secrets.PORTAL_JWT_SECRET }}
 
   # 3. Cleanup Job: Prune older container images to save storage space
-  prune-old-images:
-    needs: build-and-push-docker
-    runs-on: ubuntu-latest
-    if: |
+  prune-old-images: 
+    needs: build-and-push-docker 
+    runs-on: ubuntu-latest 
+    if: | 
       github.ref == 'refs/heads/main' && 
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-
     steps:
-    - name: Purge Untagged and Stale Images
-      uses: actions/delete-package-versions@v5
-      with:
-        package-name: ${{ github.event.repository.name }}
-        package-type: 'container'
-        min-versions-to-keep: 5
-        ignore-versions: '^(latest)$'
+      - name: Purge Untagged and Stale Images
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ github.event.repository.name }}
+          package-type: 'container'
+          min-versions-to-keep: 5
+          ignore-versions: '^(latest)$'

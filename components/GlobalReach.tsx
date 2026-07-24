@@ -70,17 +70,17 @@ export default function GlobalReach() {
         </div>
 
         <div className="mt-12 bg-gradient-to-r from-primary/10 to-secondary/10 p-8 rounded-lg border border-primary/20">
-          <h3 className="text-2xl font-bold mb-4">Worldwide Same-Day Delivery Network</h3>
+          <h3 className="text-2xl font-bold mb-4">Reliable Global Logistics</h3>
           <p className="text-gray-600 mb-4">
-            With strategic distribution centers on every continent and partnerships with leading logistics providers, 
-            we ensure your cases arrive on time, every time. Track shipments in real-time through our platform.
+            We partner with leading carriers to ship completed cases quickly and reliably, with
+            every shipment tracked in real time through the doctor portal.
           </p>
           <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <li className="flex items-center gap-2">
-              <span className="text-secondary">✓</span> Express shipping options available
+              <span className="text-secondary">✓</span> Express &amp; standard shipping options
             </li>
             <li className="flex items-center gap-2">
-              <span className="text-secondary">✓</span> Temperature-controlled logistics
+              <span className="text-secondary">✓</span> Real-time case tracking in the portal
             </li>
             <li className="flex items-center gap-2">
               <span className="text-secondary">✓</span> Full tracking & insurance

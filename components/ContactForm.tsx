@@ -164,17 +164,31 @@ export default function ContactForm({ initialName = '', initialEmail = '' }: Con
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-12">
           <div className="text-center">
-            <div className="text-3xl mb-2">📧</div>
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-primary/10 text-primary mb-3">
+              <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="5" width="18" height="14" rx="2" />
+                <path d="m3.5 7 8.5 6 8.5-6" />
+              </svg>
+            </div>
             <h3 className="font-semibold mb-1">Email</h3>
             <p className="text-gray-600">info@jdlab.us</p>
           </div>
           <div className="text-center">
-            <div className="text-3xl mb-2">📞</div>
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-secondary/10 text-secondary mb-3">
+              <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M6.6 10.8a15 15 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24 11 11 0 0 0 3.4.55 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.3a1 1 0 0 1 1 1 11 11 0 0 0 .55 3.4 1 1 0 0 1-.24 1z" />
+              </svg>
+            </div>
             <h3 className="font-semibold mb-1">Phone</h3>
             <p className="text-gray-600">551-226-9540</p>
           </div>
           <div className="text-center">
-            <div className="text-3xl mb-2">🕐</div>
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-accent/10 text-accent mb-3">
+              <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 7v5l3.5 2" />
+              </svg>
+            </div>
             <h3 className="font-semibold mb-1">Hours</h3>
             <p className="text-gray-600">24/7 Support</p>
           </div>

@@ -1,5 +1,10 @@
-# Base image: corporate-managed Node 22 (RHEL 8 UBI). docker.io is blocked, so we
-# use the sanctioned managed base image and point npm at the internal registry.
+# Base image + npm registry are ARGs so the SAME Dockerfile builds in two places:
+#   - Public GitHub CI/CD (default): docker.io `node:22-slim` + public npm.
+#     node:22-slim is multi-arch (amd64 + arm64), so buildx can target Graviton.
+#   - Corporate build: override with
+#       --build-arg NODE_IMAGE=jetae-publish.prod.aws.jpmchase.net/container-base/managedbaseimages/nodejs:22-stable
+#       --build-arg NPM_REGISTRY=https://artifacts-read.gkp.jpmchase.net/artifactory/api/npm/npm
+#     (docker.io is blocked in the corporate network).
 ARG NODE_IMAGE=node:22-slim
 ARG NPM_REGISTRY=https://registry.npmjs.org
 
@@ -11,7 +16,7 @@ RUN npm config set registry "$NPM_REGISTRY"
 # --- Dependencies ---
 FROM base AS deps
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --prefer-offline --no-audit --fund=false
 
 # --- Build ---
 FROM base AS builder
@@ -31,8 +36,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Clear any inherited entrypoint from the managed base image.
 ENTRYPOINT []
 
-# NOTE: the managed minimal base has no shadow-utils (no useradd), so we run as
-# the image's default user (root). Hardening to a non-root UID is a follow-up.
+# NOTE: runs as the image's default user (root). The public node:22-slim base
+# ships a non-root `node` user (uid 1000), so hardening to `USER node` is a
+# low-risk follow-up (the managed corporate base lacks useradd, hence root).
 
 # Static assets
 COPY --from=builder /app/public ./public
