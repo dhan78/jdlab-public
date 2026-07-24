@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { subscribeCaseEvents } from '@/lib/portal-stream'
 
 type CaseStatus = 'received' | 'planning' | 'design' | 'review' | 'shipped'
 
@@ -122,6 +123,19 @@ export default function CaseSidebar({
     window.addEventListener('cases:changed', handler)
     return () => window.removeEventListener('cases:changed', handler)
   }, [load])
+
+  // Bridge realtime (SSE) events to the local refresh event. The sidebar is
+  // mounted across the whole cases area, so subscribing here keeps BOTH the
+  // dashboard list and the sidebar live for unread badges and status changes
+  // even when no case thread is open. Any live 'update' triggers a refetch.
+  useEffect(() => {
+    const unsub = subscribeCaseEvents(ev => {
+      if (ev.event === 'update') {
+        window.dispatchEvent(new Event('cases:changed'))
+      }
+    })
+    return unsub
+  }, [])
 
   const cases = provided ?? fetched ?? []
   // Order by most-recently-viewed first (last time this user opened the case).
