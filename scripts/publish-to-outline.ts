@@ -19,8 +19,15 @@
  *   OUTLINE_DOCUMENT_URL Alternatively the full doc URL (parsed for the id).
  *
  * Usage:
- *   npm run outline:publish                     # default roots below
+ *   npm run outline:publish                     # default roots below (full sync)
  *   npm run outline:publish -- app lib README.md   # specific files/dirs
+ *
+ * Passing explicit targets is a PARTIAL publish: only those top-level folders'
+ * child documents are rewritten; every other child doc is left untouched, and
+ * the parent index tree is MERGED (kept complete) rather than shrunk to just the
+ * folders passed. Pass whole FOLDERS (e.g. `components`), not single files — a
+ * folder's child doc is always rewritten in full, so publishing one file would
+ * drop its siblings from that page.
  */
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { extname, join, relative, sep } from 'node:path'
@@ -215,10 +222,38 @@ function topOf(rel: string): string {
   return i === -1 ? 'root' : rel.slice(0, i)
 }
 
+// Recover the file paths already published in Outline, from every child document
+// EXCEPT the folders being (re)published now. Used on a PARTIAL publish so the
+// parent index tree can be MERGED (kept whole) instead of shrunk to just the
+// folders passed on the CLI. Child docs are titled by their top-level folder.
+async function existingTreeFilesExcluding(
+  parentId: string,
+  excludeGroups: Set<string>,
+): Promise<string[]> {
+  const list = await api<{ data: { id: string; title: string }[] }>('documents.list', {
+    parentDocumentId: parentId,
+    limit: 100,
+  })
+  const out: string[] = []
+  for (const child of list.data) {
+    if (excludeGroups.has(child.title)) continue // this folder is being refreshed now
+    const doc = await api<{ data: { text: string } }>('documents.info', { id: child.id })
+    for (const m of (doc.data.text ?? '').matchAll(/^## `([^`]+)`/gm)) {
+      out.push(m[1].trim())
+    }
+  }
+  return out
+}
+
 async function main() {
   const docId = resolveDocId()
-  const argTargets = process.argv.slice(2)
-  const targets = argTargets.length ? argTargets : DEFAULT_TARGETS
+  // Separate CLI flags from folder/file targets. Passing explicit targets is a
+  // PARTIAL publish: only those top-level folders' child docs are rewritten and
+  // the parent index tree is MERGED (not replaced) so the overview stays whole.
+  const argv = process.argv.slice(2)
+  const argTargets = argv.filter(a => !a.startsWith('--'))
+  const isPartial = argTargets.length > 0
+  const targets = isPartial ? argTargets : DEFAULT_TARGETS
 
   const files: string[] = []
   for (const t of targets) {
@@ -250,14 +285,26 @@ async function main() {
   }
   const groupNames = [...groups.keys()].sort()
 
+  // On a partial publish, merge the freshly-walked files with the files already
+  // held in the OTHER child docs, so the parent index tree stays complete.
+  // (Files under the republished folders come only from this walk, so
+  // additions/removals within them are reflected.)
+  let treeFiles = unique
+  if (isPartial) {
+    const kept = await existingTreeFilesExcluding(parentId, new Set(groupNames))
+    treeFiles = [...new Set([...kept, ...unique])].sort()
+  }
+  const treeGroupCount = new Set(treeFiles.map(topOf)).size
+
   const stamp = new Date().toISOString()
-  const tree = renderTree(unique)
+  const tree = renderTree(treeFiles)
   const parentHeader =
-    `> Synced from the jdlab repo · ${stamp} · ${unique.length} file(s) across ${groupNames.length} section(s)\n\n` +
+    `> Synced from the jdlab repo · ${stamp} · ${treeFiles.length} file(s) across ${treeGroupCount} section(s)` +
+    `${isPartial ? ` · partial publish: ${groupNames.join(', ')}` : ''}\n\n` +
     `Each top-level folder is a **child document** below. Run \`npm run outline:import\` to reproduce the tree.\n\n` +
     `# Repository structure\n\n\`\`\`text\n${tree}\n\`\`\`\n`
   await api('documents.update', { id: parentId, text: parentHeader, append: false })
-  console.log(`\nindex: "${info.data.title}"  ${info.data.url}`)
+  console.log(`\nindex: "${info.data.title}"  ${info.data.url}${isPartial ? '  (partial — tree merged)' : ''}`)
 
   for (const g of groupNames) {
     const rels = groups.get(g)!.slice().sort()
@@ -271,7 +318,10 @@ async function main() {
     const nChunks = await replaceDocBody(childId, header, sections)
     console.log(`  ✓ ${g}  (${rels.length} files, ${nChunks} chunk${nChunks === 1 ? '' : 's'})`)
   }
-  console.log(`\nDone: ${unique.length} files across ${groupNames.length} child document(s).`)
+  console.log(
+    `\nDone: ${isPartial ? 'partial ' : ''}sync of ${unique.length} file(s) across ` +
+      `${groupNames.length} child document(s)${isPartial ? ` (${treeFiles.length} in the merged index tree)` : ''}.`,
+  )
 }
 
 main().catch(e => {

@@ -80,10 +80,10 @@ export default function MobileRecentDrawer() {
         aria-expanded={open}
         aria-controls="mobile-recent-drawer"
         title="Recently viewed"
-        className="lg:hidden fixed left-0 top-1/2 -translate-y-1/2 z-40 flex items-center gap-1 rounded-r-lg border border-l-0 border-slate-200 bg-white/95 backdrop-blur py-2 pl-1.5 pr-1 text-slate-500 shadow-md hover:bg-slate-50 hover:text-slate-700 transition-colors"
+        className="lg:hidden fixed left-0 top-1/2 -translate-y-1/2 z-40 flex items-center gap-1.5 rounded-r-2xl border border-l-0 border-slate-200 bg-white/95 backdrop-blur py-4 pl-3.5 pr-2 text-slate-500 shadow-md hover:bg-slate-50 hover:text-slate-700 transition-colors"
       >
         <svg
-          className="w-4 h-4"
+          className="w-6 h-6"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -98,7 +98,7 @@ export default function MobileRecentDrawer() {
         </svg>
         <span className="sr-only">Recently viewed</span>
         <svg
-          className="w-3 h-3"
+          className="w-4 h-4"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
