@@ -3,9 +3,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { subscribeCaseEvents } from '@/lib/portal-stream'
+import { track } from '@/lib/telemetry'
 import { computeSurgeryReadiness, type SlaConfigMap } from '@/lib/sla'
-import type { CaseType, CaseStatus as CaseStatusMeta } from '@/lib/case-meta'
+import { formatDoctorName, type CaseType, type CaseStatus as CaseStatusMeta } from '@/lib/case-meta'
 
 type CaseStatus = 'received' | 'planning' | 'design' | 'review' | 'shipped'
 
@@ -133,19 +133,6 @@ export default function CaseSidebar({
     return () => window.removeEventListener('cases:changed', handler)
   }, [load])
 
-  // Bridge realtime (SSE) events to the local refresh event. The sidebar is
-  // mounted across the whole cases area, so subscribing here keeps BOTH the
-  // dashboard list and the sidebar live for unread badges and status changes
-  // even when no case thread is open. Any live 'update' triggers a refetch.
-  useEffect(() => {
-    const unsub = subscribeCaseEvents(ev => {
-      if (ev.event === 'update') {
-        window.dispatchEvent(new Event('cases:changed'))
-      }
-    })
-    return unsub
-  }, [])
-
   const cases = provided ?? fetched ?? []
   // Order by most-recently-viewed first (last time this user opened the case).
   // Cases the user hasn't opened yet fall back to their last-updated time so the
@@ -163,7 +150,7 @@ export default function CaseSidebar({
   const isLoading = provided ? false : loading
 
   return (
-    <aside className="lg:sticky lg:top-24 self-start" aria-label="Recently viewed cases">
+    <aside className="self-start" aria-label="Recently viewed cases">
       <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Recently viewed</h2>
@@ -204,6 +191,7 @@ export default function CaseSidebar({
                 <li key={c.id}>
                   <Link
                     href={`/portal/cases/${c.id}`}
+                    onClick={() => track('case_open', { caseId: c.id, from: 'recent' })}
                     aria-current={active ? 'page' : undefined}
                     className={`flex items-start gap-2.5 px-4 py-3 border-l-2 transition-colors group ${
                       active
@@ -230,7 +218,7 @@ export default function CaseSidebar({
                       )}
                       {role !== 'doctor' && c.doctorName && (
                         <span className="block text-xs text-slate-500 truncate mt-0.5">
-                          Dr. {c.doctorName}
+                          {formatDoctorName(c.doctorName)}
                         </span>
                       )}
                       <span className="block text-[11px] text-slate-400 tabular-nums mt-0.5">

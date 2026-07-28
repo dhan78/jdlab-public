@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
       estimatedTurnaround: body.rush ? '24 hours' : '48 hours',
       validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
     })
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: 'Failed to generate quote' },
       { status: 500 }

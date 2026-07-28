@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
     activeCases[body.caseId] = caseStatus
 
     return NextResponse.json(caseStatus, { status: 201 })
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: 'Failed to process request' },
       { status: 500 }

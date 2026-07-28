@@ -6,11 +6,13 @@ import {
   STATUS_META,
   STAGES_BY_TYPE,
   CASE_TYPE_LABELS,
+  formatDoctorName,
   type CaseStatus,
   type CaseType,
 } from '@/lib/case-meta'
 import { computeSla, SLA_CHIP, type SlaConfigMap } from '@/lib/sla'
 import { subscribeCaseEvents } from '@/lib/portal-stream'
+import { track } from '@/lib/telemetry'
 
 type Role = 'doctor' | 'planner' | 'admin'
 
@@ -485,6 +487,7 @@ export default function CaseThread({
       })
       const data = await res.json()
       if (res.ok) {
+        track('message_send', { caseId, len: body.trim().length, attachments: pending.length })
         setMessages(data.messages ?? [])
         setBody('')
         setPending([])
@@ -499,6 +502,7 @@ export default function CaseThread({
   }
 
   const handleStatusChange = async (status: CaseStatus) => {
+    track('status_change', { caseId, status })
     setStatusSaving(true)
     try {
       const res = await fetch(`/api/portal/cases/${caseId}`, {
@@ -519,6 +523,7 @@ export default function CaseThread({
 
   // Planner/admin: start (or clear) the SLA clock by marking the scans received.
   const markScansReceived = async (received: boolean) => {
+    track('scan_received', { caseId, received })
     setStatusSaving(true)
     try {
       const res = await fetch(`/api/portal/cases/${caseId}`, {
@@ -556,7 +561,7 @@ export default function CaseThread({
 
   return (
     <div className="max-w-3xl">
-        <a href="/portal" className="inline-flex items-center gap-1.5 text-slate-500 text-sm hover:text-primary transition-colors">
+        <a href="/portal" className="lg:hidden inline-flex items-center gap-1.5 text-slate-500 text-sm hover:text-primary transition-colors">
           <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M12 5l-5 5 5 5" strokeLinecap="round" strokeLinejoin="round" /></svg>
           Back to cases
         </a>
@@ -580,7 +585,7 @@ export default function CaseThread({
                 {caseDetail.surgeryDate && (
                   <span className={`inline-flex items-center gap-1.5 font-medium ${urgencyClass(caseDetail.surgeryDate, caseDetail.status)}`}><IconCalendar className="w-4 h-4" /> Surgery {formatDate(caseDetail.surgeryDate)}</span>
                 )}
-                <span className="text-slate-500">Dr. {caseDetail.doctorName}</span>
+                <span className="text-slate-500">{formatDoctorName(caseDetail.doctorName)}</span>
                 {(() => {
                   const sla = computeSla(caseDetail, now, slaConfig)
                   if (sla.state === 'shipped') return null
@@ -758,6 +763,7 @@ export default function CaseThread({
           <textarea
             value={body}
             onChange={e => { setBody(e.target.value); notifyTyping() }}
+            onFocus={() => track('composer_focus', { caseId })}
             rows={3}
             maxLength={5000}
             placeholder="Write a message… (attach photos, screenshots, or scan files)"

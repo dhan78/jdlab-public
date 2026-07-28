@@ -1,15 +1,13 @@
-import CaseSidebar from '@/components/CaseSidebar'
 import MobileRecentDrawer from '@/components/MobileRecentDrawer'
+import CasesShell from '@/components/CasesShell'
 
 /**
- * Layout for the cases area (dashboard + case detail). Because this is a
- * layout, it persists across navigations within the group — so the sidebar
- * mounts ONCE and stays mounted while you move between cases. Only {children}
- * (the dashboard list or a case thread) swaps out.
+ * Layout for the cases area (list + case detail). The list-detail split lives in
+ * CasesShell and persists across navigations within this group, so the list
+ * stays mounted while you move between cases — only the detail pane swaps.
  *
- * The route group "(cases)" does not affect the URL: the dashboard is still
- * /portal and a case is still /portal/cases/[id]. Admin lives outside this
- * group, so it gets no sidebar.
+ * The route group "(cases)" does not affect the URL: the list is still /portal
+ * and a case is still /portal/cases/[id]. Admin lives outside this group.
  */
 export default function CasesLayout({
   children,
@@ -17,17 +15,10 @@ export default function CasesLayout({
   children: React.ReactNode
 }) {
   return (
-    <section className="px-4 sm:px-6 lg:px-8 pt-2 pb-16">
-      <div className="container-wide">
-        <div className="grid grid-cols-1 lg:grid-cols-[264px_1fr] gap-8 items-start">
-          <div className="hidden lg:block lg:sticky lg:top-16 lg:self-start lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto">
-            <CaseSidebar />
-          </div>
-          <div className="min-w-0">
-            <MobileRecentDrawer />
-            {children}
-          </div>
-        </div>
+    <section className="px-4 sm:px-6 lg:px-6 pt-2 pb-16">
+      <div className="mx-auto w-full max-w-[2160px]">
+        <MobileRecentDrawer />
+        <CasesShell>{children}</CasesShell>
       </div>
     </section>
   )
