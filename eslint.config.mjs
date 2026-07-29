@@ -1,53 +1,42 @@
-import { FlatCompat } from "@eslint/eslintrc";
-import js from "@eslint/js";
-import path from "path";
-import { fileURLToPath } from "url";
+import { dirname } from 'path'
+import { fileURLToPath } from 'url'
+import { FlatCompat } from '@eslint/eslintrc'
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-  recommendedConfig: js.configs.recommended,
-});
+// Bridge the Next.js shareable configs (still written in the legacy "extends"
+// format) into ESLint 9's flat config. `next/core-web-vitals` pulls in the
+// React, React Hooks, jsx-a11y and @next/next rules; `next/typescript` adds the
+// TypeScript-aware rules (fast, non-type-checked — no parserOptions.project).
+const compat = new FlatCompat({ baseDirectory: __dirname })
 
 const eslintConfig = [
-  // GLOBAL IGNORES: Prevents ESLint from scanning built artifacts and auto-generated declarations
   {
+    // Generated output, vendored SQL/migrations and the Outline export mirror
+    // aren't ours to lint. node_modules is ignored by ESLint automatically.
     ignores: [
-      ".next/**/*",
-      "node_modules/**/*",
-      "out/**/*",
-      "next-env.d.ts",
-      "components/CaseThread.tsx",
-      "components/ContactForm.tsx",
-      "components/Testimonials.tsx"
-    ]
-
+      '.next/**',
+      'out/**',
+      'build/**',
+      'next-env.d.ts',
+      'drizzle/**',
+      'outline-export/**',
+    ],
   },
-
-  js.configs.recommended,
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
-  
-    {
+  ...compat.extends('next/core-web-vitals', 'next/typescript'),
+  {
     rules: {
-      // 1. Silences apostrophe and quote errors in your text components
-      "react/no-unescaped-entities": "off",
-
-      // 2. Silences warnings about old inline comment overrides
-      "eslint-comments/no-unused-disable": "off", 
-      "no-warning-comments": "off",
-
-      // 3. Keep these active from before to bypass routing errors
-      "@next/next/no-html-link-for-pages": "off",
-      "no-useless-escape": "off",
-      "@next/next/no-img-element": "off",
-
-            // Deactivates warnings for declared variables that are never read
-      "@typescript-eslint/no-unused-vars": "off"
-
+      // Literal apostrophes/quotes in JSX *text* render fine; this rule guards a
+      // theoretical ambiguity that rarely matters and is commonly disabled. The
+      // meaningful rules (react-hooks, jsx-a11y, @next/next, no-unused-vars) stay on.
+      'react/no-unescaped-entities': 'off',
+      // Pages-Router-era rule that misfires in App-Router projects (this repo has
+      // no `pages/` dir). It false-positives here even though internal links all
+      // use <Link> and the only <a> tags are tel:/mailto: (which must be anchors).
+      '@next/next/no-html-link-for-pages': 'off',
     },
   },
-];
+]
 
-export default eslintConfig;
+export default eslintConfig

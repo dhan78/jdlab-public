@@ -2,14 +2,16 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
+import { usePathname, useRouter } from 'next/navigation'
+import { track } from '@/lib/telemetry'
 import { StatusIcon } from './StatusIcon'
 import { SegmentedControl } from './SegmentedControl'
 import {
   STATUS_META,
   STAGES_BY_TYPE,
-  CASE_STATUSES,
   CASE_TYPE_LABELS,
   CASE_TYPE_GROUPS,
+  formatDoctorName,
   type CaseStatus,
   type CaseType,
 } from '@/lib/case-meta'
@@ -32,6 +34,53 @@ interface CaseRow {
   updatedAt: string
   messageCount: number
   unreadCount?: number
+}
+
+// Back-navigation memory. On mobile, opening a case unmounts this list (the
+// route-based single pane in CasesShell) and remounts it with a fresh fetch on
+// back-nav, so filters, pagination and scroll would otherwise reset to defaults
+// and you'd land in the wrong place (typically the bottom of the regrown list).
+// We snapshot the view to sessionStorage when a case is opened and rehydrate it
+// on mount. Desktop keeps the list mounted, so scroll is only reapplied on small
+// viewports; the snapshot is session-scoped so it doesn't leak into a new tab.
+const LIST_STATE_KEY = 'jdlab.caseListView'
+
+type Scope = 'active' | 'shipped' | 'all'
+type SortBy = 'recent' | 'surgery'
+
+interface ListView {
+  q: string
+  rush: boolean
+  unread: boolean
+  scope: Scope
+  sort: SortBy
+  page: number
+  y: number
+}
+
+function readListView(): ListView {
+  const v: ListView = { q: '', rush: false, unread: false, scope: 'active', sort: 'recent', page: 1, y: 0 }
+  if (typeof window === 'undefined') return v
+  // Legacy per-key memory (predates the consolidated snapshot); used as the
+  // baseline so cross-visit sort and within-session unread focus still work.
+  const legacySort = window.localStorage.getItem('jdlab.caseSort')
+  if (legacySort === 'surgery' || legacySort === 'recent') v.sort = legacySort
+  if (window.sessionStorage.getItem('jdlab.unreadOnly') === '1') { v.unread = true; v.scope = 'all' }
+  try {
+    const raw = window.sessionStorage.getItem(LIST_STATE_KEY)
+    if (!raw) return v
+    const s = JSON.parse(raw) as Partial<ListView>
+    if (typeof s.q === 'string') v.q = s.q
+    v.rush = !!s.rush
+    v.unread = !!s.unread
+    if (s.scope === 'active' || s.scope === 'shipped' || s.scope === 'all') v.scope = s.scope
+    if (s.sort === 'recent' || s.sort === 'surgery') v.sort = s.sort
+    if (typeof s.page === 'number' && s.page >= 1) v.page = s.page
+    if (typeof s.y === 'number' && s.y >= 0) v.y = s.y
+  } catch {
+    /* corrupt snapshot → fall back to defaults/legacy */
+  }
+  return v
 }
 
 const SCANNERS = [
@@ -202,10 +251,17 @@ export default function CaseList() {
   const [shipAddresses, setShipAddresses] = useState<{ id: string; label?: string; address: string; isPreferred: boolean }[]>([])
   const [shipToAddress, setShipToAddress] = useState('')
 
+  // Currently open case (drives the active-row highlight in the master-detail view).
+  const pathname = usePathname()
+  const router = useRouter()
+  const activeCaseId = pathname?.startsWith('/portal/cases/') ? pathname.split('/').pop() ?? null : null
+
+  // Keyboard niceties: '/' focuses search; j/k move the highlighted row; Enter opens it.
+  const searchRef = useRef<HTMLInputElement>(null)
+  const [focusIdx, setFocusIdx] = useState(-1)
+
   // Filter / search / sort (work queue)
   const [query, setQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | CaseStatus>('all')
-  const [typeFilter, setTypeFilter] = useState<'all' | CaseType>('all')
   const [rushOnly, setRushOnly] = useState(false)
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [sortBy, setSortBy] = useState<'recent' | 'surgery'>('recent')
@@ -241,6 +297,37 @@ export default function CaseList() {
   }, [])
 
   useEffect(() => { fetchCases() }, [fetchCases])
+
+  // Snapshot the current view (filters + page + scroll) when a case is opened,
+  // so mobile back-navigation — which unmounts and remounts this list — can
+  // return to the exact spot. Rehydrated by readListView() on mount.
+  const rememberListState = useCallback(() => {
+    const onMobile = window.matchMedia('(max-width: 1023px)').matches
+    try {
+      window.sessionStorage.setItem(
+        LIST_STATE_KEY,
+        JSON.stringify({
+          q: query, rush: rushOnly, unread: unreadOnly, scope, sort: sortBy,
+          page, y: onMobile ? window.scrollY : 0,
+        }),
+      )
+    } catch {
+      /* ignore storage errors (private mode, quota) */
+    }
+  }, [query, rushOnly, unreadOnly, scope, sortBy, page])
+
+  // Scroll target captured during hydration (see the hydrate effect below).
+  const pendingScrollRef = useRef(0)
+  const scrollRestoredRef = useRef(false)
+  // Reapply the saved scroll once the list has re-rendered with data (loading
+  // flips false), at most once per mount so live SSE refetches — which keep
+  // loading false — never yank the viewport. Mobile only.
+  useEffect(() => {
+    if (loading || scrollRestoredRef.current) return
+    scrollRestoredRef.current = true
+    const y = pendingScrollRef.current
+    if (y > 0 && window.matchMedia('(max-width: 1023px)').matches) window.scrollTo(0, y)
+  }, [loading])
 
   // Live clock so SLA chips recompute on their own as time passes (e.g. "due
   // today" rolls to "overdue" at midnight) without needing a refetch.
@@ -288,10 +375,36 @@ export default function CaseList() {
     }
   }, [fetchCases])
 
+  // Rehydrate the saved view once on mount. Done in an effect (not lazy state)
+  // so SSR and the first client render both use defaults → no hydration
+  // mismatch; the list shows its skeleton until data + filters settle.
+  const [restorePage, setRestorePage] = useState<number | null>(null)
+  useEffect(() => {
+    const v = readListView()
+    setQuery(v.q)
+    setRushOnly(v.rush)
+    setUnreadOnly(v.unread)
+    setScope(v.scope)
+    setSortBy(v.sort)
+    pendingScrollRef.current = v.y
+    // Restore the page via state so phase 2 (below) can win the race against the
+    // filter-driven page reset that runs in the same commit.
+    setRestorePage(v.page)
+  }, [])
+
   // Reset to the first page whenever the filtered set's inputs change.
   useEffect(() => {
     setPage(1)
-  }, [query, statusFilter, typeFilter, rushOnly, unreadOnly, scope, sortBy])
+  }, [query, rushOnly, unreadOnly, scope, sortBy])
+
+  // Reapply the saved page. Declared AFTER the reset effect and keyed on a value
+  // that changes in the same commit as the restored filters, so its setPage runs
+  // last and survives. No-op on normal filter changes (restorePage stays null).
+  useEffect(() => {
+    if (restorePage == null) return
+    setPage(restorePage)
+    setRestorePage(null)
+  }, [restorePage])
 
   // Load the doctor's practice addresses to populate the ship-to picker.
   useEffect(() => {
@@ -319,30 +432,13 @@ export default function CaseList() {
     return () => { cancelled = true }
   }, [role])
 
-  // Restore the dentist's last sort choice, then persist it on change.
-  useEffect(() => {
-    const saved = typeof window !== 'undefined' ? window.localStorage.getItem('jdlab.caseSort') : null
-    if (saved === 'surgery' || saved === 'recent') setSortBy(saved)
-  }, [])
-
-  // Restore the "unread only" focus filter within the session, so replying to a
-  // case and navigating back keeps the doctor filtered on remaining unread work.
-  // Session-scoped (not localStorage) so it doesn't persist into a fresh visit.
-  // Restoring it also widens scope to 'all' so unread cases in any status show.
-  useEffect(() => {
-    const saved = typeof window !== 'undefined' ? window.sessionStorage.getItem('jdlab.unreadOnly') : null
-    if (saved === '1') {
-      setUnreadOnly(true)
-      setScope('all')
-    }
-  }, [])
-
   // "Unread only" is a focus mode: turning it ON widens scope to 'all' so unread
   // messages in shipped/other cases aren't hidden (the badge counts them), and
   // turning it OFF restores the scope you were on before (default 'active').
   const toggleUnreadOnly = () => {
     setUnreadOnly(v => {
       const next = !v
+      track('filter_unread', { on: next })
       if (next) {
         prevScopeRef.current = scope
         setScope('all')
@@ -362,11 +458,13 @@ export default function CaseList() {
   // Scope changes made directly by the user take precedence: forget the
   // remembered baseline so turning unread-only off later won't override it.
   const chooseScope = (value: 'active' | 'shipped' | 'all') => {
+    track('scope_change', { scope: value })
     prevScopeRef.current = null
     setScope(value)
   }
 
   const chooseSort = (value: 'recent' | 'surgery') => {
+    track('sort_change', { sort: value })
     setSortBy(value)
     try {
       window.localStorage.setItem('jdlab.caseSort', value)
@@ -435,15 +533,13 @@ export default function CaseList() {
 
   // Client-side filtering/search over the fetched cases.
   const q = query.trim().toLowerCase()
-  const hasFilters = q !== '' || statusFilter !== 'all' || typeFilter !== 'all' || rushOnly || unreadOnly
+  const hasFilters = q !== '' || rushOnly || unreadOnly
 
   // Human-readable summary of the current view/selection, shown in the header so
   // it's always clear which scope + filters are applied.
   // Effective sort: the shipped archive is always ordered by surgery date.
   const sortLabel = scope === 'shipped' || sortBy === 'surgery' ? 'Surgery date' : 'Recently updated'
   const appliedFilters: string[] = []
-  if (statusFilter !== 'all') appliedFilters.push(STATUS_META[statusFilter].label)
-  if (typeFilter !== 'all') appliedFilters.push(CASE_TYPE_LABELS[typeFilter])
   if (rushOnly) appliedFilters.push('Rush')
   if (unreadOnly) appliedFilters.push('Unread')
   if (q) appliedFilters.push(`"${query.trim()}"`)
@@ -451,8 +547,6 @@ export default function CaseList() {
     .filter(c =>
       scope === 'all' ? true : scope === 'shipped' ? c.status === 'shipped' : c.status !== 'shipped'
     )
-    .filter(c => statusFilter === 'all' || c.status === statusFilter)
-    .filter(c => typeFilter === 'all' || c.caseType === typeFilter)
     .filter(c => !rushOnly || c.isRush)
     .filter(c => !unreadOnly || (c.unreadCount ?? 0) > 0)
     .filter(
@@ -486,10 +580,61 @@ export default function CaseList() {
   const currentPage = Math.min(page, totalPages)
   const pagedCases = visibleCases.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
+  // Global keyboard shortcuts for the list. '/' jumps to search from anywhere;
+  // j/k walk the highlighted row and Enter opens it (Gmail-style). Arrow keys are
+  // intentionally left alone so they still scroll the page/thread.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null
+      const typing = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+      if (e.key === '/' && !typing) {
+        e.preventDefault()
+        searchRef.current?.focus()
+        searchRef.current?.select()
+        return
+      }
+      if (typing) {
+        if (e.key === 'Escape' && el === searchRef.current) el.blur()
+        return
+      }
+      if (e.key === 'Escape') { setFocusIdx(-1); return }
+      if (!pagedCases.length) return
+      if (e.key === 'j') {
+        e.preventDefault()
+        setFocusIdx(i => Math.min((i < 0 ? -1 : i) + 1, pagedCases.length - 1))
+      } else if (e.key === 'k') {
+        e.preventDefault()
+        setFocusIdx(i => Math.max((i <= 0 ? 1 : i) - 1, 0))
+      } else if (e.key === 'Enter' && focusIdx >= 0 && focusIdx < pagedCases.length) {
+        e.preventDefault()
+        track('case_open', { caseId: pagedCases[focusIdx].id, from: 'keyboard' })
+        router.push(`/portal/cases/${pagedCases[focusIdx].id}`)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [pagedCases, focusIdx, router])
+
+  // Keep the highlighted row valid + in view as the list changes.
+  useEffect(() => {
+    setFocusIdx(i => (i >= pagedCases.length ? pagedCases.length - 1 : i))
+  }, [pagedCases.length])
+  useEffect(() => {
+    if (focusIdx < 0) return
+    document.getElementById(`case-row-${focusIdx}`)?.scrollIntoView({ block: 'nearest' })
+  }, [focusIdx])
+
+  // Telemetry: record searches (length only — never the term, which may be a
+  // patient name) once the user pauses typing.
+  useEffect(() => {
+    const q = query.trim()
+    if (!q) return
+    const id = setTimeout(() => track('search', { len: q.length }), 800)
+    return () => clearTimeout(id)
+  }, [query])
+
   const clearFilters = () => {
     setQuery('')
-    setStatusFilter('all')
-    setTypeFilter('all')
     setRushOnly(false)
     // If unread-only had widened the scope, fall back to where we were before.
     if (unreadOnly) {
@@ -518,7 +663,7 @@ export default function CaseList() {
   return (
     <div>
             {/* Sticky toolbar: title, scope/sort, and search/filters stay pinned while scrolling */}
-            <div className={`sticky top-16 z-30 -mx-4 px-4 mb-3 bg-slate-50/90 backdrop-blur supports-[backdrop-filter]:bg-slate-50/75 transition-all duration-200 ${condensed ? 'py-2 shadow-sm border-b border-slate-200' : 'pt-1 pb-2'}`}>
+            <div className={`sticky top-16 lg:top-0 z-30 -mx-4 px-4 mb-3 bg-slate-50/90 backdrop-blur supports-[backdrop-filter]:bg-slate-50/75 transition-all duration-200 ${condensed ? 'py-2 shadow-sm border-b border-slate-200' : 'pt-0 pb-2'}`}>
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 {/* Kept for accessibility + document outline (role context:
                     "My Cases" vs "Work Queue"); the visible label below mirrors it. */}
@@ -533,7 +678,7 @@ export default function CaseList() {
                 </span>
                 {isDoctor && (
                   <button
-                    onClick={() => setShowForm(v => !v)}
+                    onClick={() => { setShowForm(v => !v); track('new_case_toggle', { open: !showForm }) }}
                     className="inline-flex items-center gap-1 bg-primary text-white text-xs font-medium px-2.5 py-1 rounded-md hover:bg-primary/90 shadow-sm transition"
                   >
                     {showForm ? 'Cancel' : (
@@ -547,35 +692,31 @@ export default function CaseList() {
 
               {/* Unified control bar: search · filters · view · count (one row, wraps gracefully) */}
               {!loading && !error && cases.length > 0 && (
-                <div className={`flex flex-wrap items-center gap-2 transition-all duration-200 ${condensed ? 'mt-1.5' : 'mt-2'}`}>
-                  {/* Search — full width on phones (own row), grows to fill from sm up */}
-                  <div className="relative w-full sm:w-auto sm:flex-1 sm:min-w-[200px]">
+                <div className={`flex flex-col gap-2 transition-all duration-200 ${condensed ? 'mt-1.5' : 'mt-1'}`}>
+                  {/* Row 1: search + filter pills — always one line on every screen size.
+                      The search input is the shrinkable element that absorbs the width. */}
+                  <div className="flex flex-nowrap items-center gap-2 w-full min-w-0">
+                  {/* Search — shrinks to make room so the pills stay on the same line */}
+                  <div className="relative flex-1 min-w-0">
                     <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="9" cy="9" r="6" /><path d="m14 14 3 3" strokeLinecap="round" /></svg>
                     <input
+                      ref={searchRef}
                       type="search"
                       value={query}
                       onChange={e => setQuery(e.target.value)}
                       placeholder="Search by patient, tooth, case #…"
                       aria-label="Search cases"
-                      className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                      aria-keyshortcuts="/"
+                      className="w-full pl-9 pr-8 py-2 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
                     />
+                    {!query && (
+                      <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 hidden sm:flex h-5 min-w-[1.25rem] items-center justify-center rounded border border-slate-200 bg-slate-50 px-1 text-[11px] font-medium text-slate-400">/</kbd>
+                    )}
                   </div>
 
-                  {/* Filters */}
-                  <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as 'all' | CaseStatus)} aria-label="Filter by status" className="px-3 py-2 border border-slate-300 rounded-lg bg-white text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/30">
-                    <option value="all">All statuses</option>
-                    {CASE_STATUSES.map(s => <option key={s} value={s}>{STATUS_META[s].label}</option>)}
-                  </select>
-                  <select value={typeFilter} onChange={e => setTypeFilter(e.target.value as 'all' | CaseType)} aria-label="Filter by type" className="px-3 py-2 border border-slate-300 rounded-lg bg-white text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/30">
-                    <option value="all">All types</option>
-                    {CASE_TYPE_GROUPS.map(g => (
-                      <optgroup key={g.label} label={g.label}>
-                        {g.types.map(t => <option key={t} value={t}>{CASE_TYPE_LABELS[t]}</option>)}
-                      </optgroup>
-                    ))}
-                  </select>
-                  <label className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-300 rounded-lg bg-white text-sm text-slate-700 cursor-pointer select-none">
-                    <input type="checkbox" checked={rushOnly} onChange={e => setRushOnly(e.target.checked)} className="w-4 h-4 rounded border-slate-300 text-red-600 focus:ring-red-500/40" />
+                  {/* Rush filter */}
+                  <label className="inline-flex items-center gap-1.5 shrink-0 px-3 py-2 border border-slate-300 rounded-lg bg-white text-sm text-slate-700 cursor-pointer select-none">
+                    <input type="checkbox" checked={rushOnly} onChange={e => { setRushOnly(e.target.checked); track('filter_rush', { on: e.target.checked }) }} className="w-4 h-4 rounded border-slate-300 text-red-600 focus:ring-red-500/40" />
                     Rush
                   </label>
                   {totalUnread > 0 && (
@@ -584,7 +725,7 @@ export default function CaseList() {
                       onClick={toggleUnreadOnly}
                       aria-pressed={unreadOnly}
                       title={unreadOnly ? 'Showing only unread — click to show all' : `Show only the ${totalUnread} case${totalUnread === 1 ? '' : 's'} with unread messages`}
-                      className={`relative inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-md transition duration-150 transform-gpu active:brightness-95 ${unreadOnly ? 'bg-white text-accent ring-2 ring-accent shadow-inner' : 'bg-accent text-white shadow-sm hover:shadow-md motion-safe:hover:scale-105'}`}
+                      className={`relative inline-flex items-center gap-1 shrink-0 whitespace-nowrap text-xs font-semibold px-2.5 py-1 rounded-md transition duration-150 transform-gpu active:brightness-95 ${unreadOnly ? 'bg-white text-accent ring-2 ring-accent shadow-inner' : 'bg-accent text-white shadow-sm hover:shadow-md motion-safe:hover:scale-105'}`}
                     >
                       {!unreadOnly && (
                         <span className="absolute -inset-1 rounded-md bg-accent/40 animate-ping" aria-hidden="true" />
@@ -605,13 +746,12 @@ export default function CaseList() {
                     </button>
                   )}
                   {hasFilters && (
-                    <button type="button" onClick={clearFilters} className="px-2.5 py-2 text-sm text-slate-500 hover:text-primary">Clear</button>
+                    <button type="button" onClick={clearFilters} className="shrink-0 px-2.5 py-2 text-sm text-slate-500 hover:text-primary">Clear</button>
                   )}
+                  </div>
 
-                  {/* View controls: scope + sort — grouped so they always stay on one line together.
-                      Right-aligned from sm up; left-justified on phones. */}
-                  <div className="flex items-center gap-2 sm:ml-auto">
-                    <span className="hidden lg:block w-px h-6 bg-slate-200 mx-0.5" aria-hidden="true" />
+                  {/* Row 2: view controls (scope + sort) — always their own single line. */}
+                  <div className="flex items-center gap-2">
                     <SegmentedControl
                       ariaLabel="Show cases"
                       value={scope}
@@ -779,21 +919,25 @@ export default function CaseList() {
                 <button type="button" onClick={clearFilters} className="mt-2 text-sm text-primary hover:underline">Clear filters</button>
               </div>
             ) : (
-                  <ul className="space-y-4">
-                    {pagedCases.map(c => {
+                  <ul className="@container space-y-4">
+                    {pagedCases.map((c, idx) => {
                   const s = STATUS_META[c.status]
+                  const isActive = activeCaseId === c.id
+                  const isFocused = idx === focusIdx
                   return (
-                    <li key={c.id}>
+                    <li key={c.id} id={`case-row-${idx}`}>
                       <Link
                         href={`/portal/cases/${c.id}`}
-                        className="group relative block bg-white rounded-2xl border border-slate-200 hover:border-primary/40 hover:shadow-md shadow-sm transition-all pl-5 pr-4 py-4 overflow-hidden"
+                        onClick={() => { rememberListState(); track('case_open', { caseId: c.id, from: 'list' }) }}
+                        aria-current={isActive ? 'page' : undefined}
+                        className={`group relative block rounded-2xl border transition-all pl-5 pr-4 py-4 overflow-hidden ${isActive ? 'border-primary ring-1 ring-primary/30 bg-primary/[0.03] shadow-md' : 'bg-white border-slate-200 hover:border-primary/40 hover:shadow-md shadow-sm'} ${isFocused ? 'ring-2 ring-primary ring-offset-1' : ''}`}
                       >
                         {/* status accent bar */}
                         <span className={`absolute left-0 top-0 bottom-0 w-1 ${s.bar}`} aria-hidden="true" />
 
-                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-5">
+                        <div className="flex flex-col gap-3 @2xl:flex-row @2xl:items-center @2xl:gap-5">
                           {/* identity */}
-                          <div className="min-w-0 lg:flex-1">
+                          <div className="min-w-0 @2xl:flex-1">
                             <div className="flex items-center gap-2.5 flex-wrap">
                               <span className="text-xs font-mono text-slate-400 tabular-nums">{c.caseNumber}</span>
                               <span className="font-semibold text-slate-900 truncate">{c.title}</span>
@@ -848,7 +992,7 @@ export default function CaseList() {
                                 )
                               })()}
                               {!isDoctor && (
-                                <span className="text-slate-500">Dr. {c.doctorName}</span>
+                                <span className="text-slate-500">{formatDoctorName(c.doctorName)}</span>
                               )}
                               <span className="inline-flex items-center gap-1.5 text-slate-400 tabular-nums">
                                 <IconChat className="w-4 h-4" /> {c.messageCount}
@@ -870,12 +1014,12 @@ export default function CaseList() {
                             </div>
                           </div>
 
-                          {/* lifecycle tracker — beside the title on lg, stacked below on mobile/tablet */}
-                          <div className="w-full lg:w-[23rem] xl:w-[26rem] flex-shrink-0 border-t border-slate-100 pt-3 lg:border-t-0 lg:pt-0 lg:border-l lg:border-slate-100 lg:pl-5">
+                          {/* lifecycle tracker — beside the title when the pane is wide, stacked below when narrow (container-query, not viewport) */}
+                          <div className="w-full @2xl:w-[23rem] @4xl:w-[26rem] flex-shrink-0 border-t border-slate-100 pt-3 @2xl:border-t-0 @2xl:pt-0 @2xl:border-l @2xl:border-slate-100 @2xl:pl-5">
                             <StatusTracker status={c.status} order={STAGES_BY_TYPE[c.caseType] ?? DEFAULT_ORDER} />
                           </div>
 
-                          <IconChevron className="hidden lg:block w-4 h-4 text-slate-300 group-hover:text-primary group-hover:translate-x-0.5 transition-all flex-shrink-0" />
+                          <IconChevron className="hidden @2xl:block w-4 h-4 text-slate-300 group-hover:text-primary group-hover:translate-x-0.5 transition-all flex-shrink-0" />
                         </div>
                       </Link>
                     </li>

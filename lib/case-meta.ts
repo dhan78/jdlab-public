@@ -20,6 +20,17 @@ export type CaseStatus =
   | 'finishing'
   | 'shipped'
 
+/**
+ * Display a doctor's name with a single "Dr." honorific. Names are stored
+ * without a title, but some records (e.g. admin-entered) already include one —
+ * so only prepend when it isn't already there, to avoid "Dr. Dr. …".
+ */
+export function formatDoctorName(name?: string | null): string {
+  const n = (name ?? '').trim()
+  if (!n) return 'Doctor'
+  return /^dr\.?\s/i.test(n) ? n : `Dr. ${n}`
+}
+
 export const CASE_STATUSES: CaseStatus[] = [
   'received',
   'planning',

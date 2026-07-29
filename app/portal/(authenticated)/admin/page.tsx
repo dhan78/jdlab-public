@@ -26,6 +26,15 @@ export default function PortalAdminPage() {
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
           <SlaSettingsForm />
         </div>
+
+        <div className="mt-10">
+          <a
+            href="/portal/admin/telemetry"
+            className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline"
+          >
+            View Session Timeline (interaction replay) →
+          </a>
+        </div>
       </div>
     </section>
   )
