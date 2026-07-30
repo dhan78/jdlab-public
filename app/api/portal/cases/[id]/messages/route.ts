@@ -5,19 +5,31 @@ import {
   findCaseById,
   addMessage,
   listMessagesForCase,
-  type CaseAttachment,
 } from '@/lib/case-store'
+import { keyBelongsToCase, headAttachment } from '@/lib/storage'
 import { findDoctorById } from '@/lib/portal-store'
 import { recordAudit } from '@/lib/audit'
 import { rateLimit, clientIp } from '@/lib/rate-limit'
 import { sendCaseMessageNotification } from '@/lib/email'
 import { emitCaseUpdate } from '@/lib/case-events'
+import { decodeCaseId } from '@/lib/case-code'
+import { getLabUserIds } from '@/lib/notifications'
+import { dispatchNotification } from '@/lib/notify-dispatch'
 
-// Per-attachment cap (~8MB of raw bytes). Base64 inflates ~33%, so the JSON
-// body is larger; this is a demo in-memory store, so we keep it modest.
+// Per-attachment cap (~8MB of raw bytes) for the INLINE base64 path (rides the
+// JSON body). Directly-uploaded (presigned PUT) attachments use the larger cap.
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
+const MAX_S3_ATTACHMENT_BYTES = 150 * 1024 * 1024
 const MAX_ATTACHMENTS = 6
 const MAX_BODY_LENGTH = 5000
+
+type ResolvedAttachment = {
+  name: string
+  mimeType: string
+  size: number
+  dataUrl?: string
+  storageKey?: string
+}
 
 async function getSession(request: NextRequest): Promise<SessionPayload | null> {
   const token = getSessionFromCookies(request.headers.get('cookie'))
@@ -35,6 +47,7 @@ interface IncomingAttachment {
   mimeType?: unknown
   size?: unknown
   dataUrl?: unknown
+  s3Key?: unknown
 }
 
 // GET: list messages for a case (used by the SSE client to refetch on update).
@@ -107,30 +120,47 @@ export async function POST(
     )
   }
 
-  const attachments: CaseAttachment[] = []
+  const attachments: ResolvedAttachment[] = []
   for (const raw of rawAttachments as IncomingAttachment[]) {
     const name = typeof raw.name === 'string' ? raw.name.trim() : ''
     const mimeType = typeof raw.mimeType === 'string' ? raw.mimeType : ''
     const size = typeof raw.size === 'number' ? raw.size : 0
+    const s3Key = typeof raw.s3Key === 'string' ? raw.s3Key : ''
     const dataUrl = typeof raw.dataUrl === 'string' ? raw.dataUrl : ''
 
-    if (!name || !dataUrl.startsWith('data:')) {
+    if (!name) {
       return NextResponse.json({ error: 'Invalid attachment' }, { status: 400 })
     }
-    if (size > MAX_ATTACHMENT_BYTES) {
-      return NextResponse.json(
-        { error: `"${name}" exceeds the ${MAX_ATTACHMENT_BYTES / (1024 * 1024)}MB limit` },
-        { status: 400 }
-      )
-    }
 
-    attachments.push({
-      id: crypto.randomUUID(),
-      name,
-      mimeType,
-      size,
-      dataUrl,
-    })
+    if (s3Key) {
+      // Directly uploaded via presigned PUT. Trust nothing the client said about
+      // it: verify the key is under THIS case's prefix and the object really
+      // exists, then take its true size from S3.
+      if (!keyBelongsToCase(s3Key, id)) {
+        return NextResponse.json({ error: 'Invalid attachment' }, { status: 400 })
+      }
+      const meta = await headAttachment(s3Key)
+      if (!meta) {
+        return NextResponse.json({ error: `Upload for "${name}" was not found` }, { status: 400 })
+      }
+      if (meta.size > MAX_S3_ATTACHMENT_BYTES) {
+        return NextResponse.json(
+          { error: `"${name}" exceeds the ${MAX_S3_ATTACHMENT_BYTES / (1024 * 1024)}MB limit` },
+          { status: 413 }
+        )
+      }
+      attachments.push({ name, mimeType, size: meta.size, storageKey: s3Key })
+    } else if (dataUrl.startsWith('data:')) {
+      if (size > MAX_ATTACHMENT_BYTES) {
+        return NextResponse.json(
+          { error: `"${name}" exceeds the ${MAX_ATTACHMENT_BYTES / (1024 * 1024)}MB limit` },
+          { status: 413 }
+        )
+      }
+      attachments.push({ name, mimeType, size, dataUrl })
+    } else {
+      return NextResponse.json({ error: 'Invalid attachment' }, { status: 400 })
+    }
   }
 
   if (!text && attachments.length === 0) {
@@ -163,6 +193,28 @@ export async function POST(
 
   // Notify the other party (doctor <-> lab). Fire-and-forget.
   const snippet = text ? text.slice(0, 200) : `[${attachments.length} attachment(s)]`
+
+  // Bell + web push for the recipient(s): the doctor when the lab posts, or the
+  // whole lab team when the doctor posts. Fire-and-forget — never blocks send.
+  void (async () => {
+    try {
+      const fromLab = session.role !== 'doctor'
+      const recipientIds = fromLab
+        ? [Number(caseRow.doctorId)]
+        : await getLabUserIds()
+      await dispatchNotification({
+        recipientIds,
+        caseId: decodeCaseId(id),
+        caseToken: id,
+        type: 'message',
+        title: caseRow.title,
+        body: `${session.name}: ${snippet}`,
+      })
+    } catch (err) {
+      console.error('[notify] message notification failed', err)
+    }
+  })()
+
   void (async () => {
     try {
       const isFromLab = session.role !== 'doctor'

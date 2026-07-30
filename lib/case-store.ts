@@ -1,5 +1,5 @@
 import { db } from './db'
-import { cases, caseMessages, messageAttachments, caseStatusHistory, users, caseReads } from './db/schema'
+import { cases, caseMessages, messageAttachments, caseStatusHistory, users, caseReads, auditLog } from './db/schema'
 import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm'
 import { encodeCaseId, decodeCaseId } from './case-code'
 import { isS3Enabled, putAttachment, getAttachmentUrl, parseDataUrl } from './storage'
@@ -391,13 +391,20 @@ export async function getLastViewedMap(userId: string): Promise<Record<string, s
   const uid = toIntId(userId)
   if (uid < 0) return {}
 
+  // Sourced from the audit trail's `case.view` records (written on every case
+  // open) rather than case_reads.last_read_at: opening a case no longer marks it
+  // read, so read time is no longer a proxy for "viewed".
   const rows = await db
-    .select({ caseId: caseReads.caseId, lastReadAt: caseReads.lastReadAt })
-    .from(caseReads)
-    .where(eq(caseReads.userId, uid))
+    .select({ caseId: auditLog.caseId, viewedAt: sql<string>`max(${auditLog.createdAt})` })
+    .from(auditLog)
+    .where(and(eq(auditLog.actorId, uid), eq(auditLog.action, 'case.view')))
+    .groupBy(auditLog.caseId)
 
   const out: Record<string, string> = {}
-  for (const r of rows) out[encodeCaseId(r.caseId)] = r.lastReadAt.toISOString()
+  for (const r of rows) {
+    if (r.caseId == null) continue
+    out[encodeCaseId(r.caseId)] = new Date(r.viewedAt).toISOString()
+  }
   return out
 }
 
@@ -407,7 +414,7 @@ export async function addMessage(input: {
   authorName: string
   authorRole: 'doctor' | 'planner' | 'admin'
   body: string
-  attachments: CaseAttachment[]
+  attachments: Array<{ name: string; mimeType: string; size: number; dataUrl?: string; storageKey?: string }>
 }): Promise<CaseMessage> {
   const caseId = decodeCaseId(input.caseId)
 
@@ -436,14 +443,19 @@ export async function addMessage(input: {
     const values = await Promise.all(
       input.attachments.map(async a => {
         const base = { messageId: msg.id, name: a.name, mimeType: a.mimeType, sizeBytes: a.size }
-        if (isS3Enabled()) {
+        // Already uploaded directly to S3 (presigned PUT) — store the key as-is.
+        if (a.storageKey) {
+          return { ...base, storageKey: a.storageKey, dataUrl: null }
+        }
+        // Inline base64: upload to S3 when configured, else persist the data URL.
+        if (isS3Enabled() && a.dataUrl) {
           const parsed = parseDataUrl(a.dataUrl)
           if (parsed) {
             const key = await putAttachment(parsed.bytes, parsed.mimeType || a.mimeType, a.name)
             return { ...base, storageKey: key, dataUrl: null }
           }
         }
-        return { ...base, storageKey: null, dataUrl: a.dataUrl }
+        return { ...base, storageKey: null, dataUrl: a.dataUrl ?? null }
       })
     )
     const inserted = await db.insert(messageAttachments).values(values).returning()

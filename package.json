@@ -15,6 +15,7 @@
     "db:seed": "tsx --env-file=.env.local lib/db/seed.ts",
     "db:set-admin-password": "tsx --env-file=.env.local scripts/set-admin-password.ts",
     "outline:publish": "tsx --env-file=.env.local scripts/publish-to-outline.ts",
+    "outline:publish:changed": "tsx --env-file=.env.local scripts/publish-to-outline.ts --changed",
     "outline:import": "tsx --env-file=.env.local scripts/import-from-outline.ts"
   },
   "dependencies": {
@@ -23,6 +24,8 @@
     "@aws-sdk/s3-request-presigner": "^3.1080.0",
     "@azure/identity": "^4.13.0",
     "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
     "axios": "^1.6.0",
     "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.45.2",
@@ -31,7 +34,9 @@
     "pg": "^8.22.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-resizable-panels": "^2.1.9"
+    "react-resizable-panels": "^2.1.9",
+    "three": "^0.184.0",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.6",
@@ -40,6 +45,8 @@
     "@types/pg": "^8.20.0",
     "@types/react": "^18.0.0",
     "@types/react-dom": "^18.0.0",
+    "@types/three": "^0.183.1",
+    "@types/web-push": "^3.6.4",
     "autoprefixer": "^10.4.0",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",

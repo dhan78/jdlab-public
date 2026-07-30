@@ -1,8 +1,12 @@
 import Header from '@/components/Header'
 import Footer from '@/components/Footer'
 import PageBackground from '@/components/PageBackground'
+import Image from 'next/image'
 
 export default function DigitalScansPage() {
+  // Intrinsic sizes of /images/3shape-step-N.jpg, so next/image reserves the
+  // right space per step (no layout shift / distortion).
+  const stepDims = [{ w: 1024, h: 603 }, { w: 1013, h: 499 }, { w: 988, h: 482 }, { w: 1024, h: 591 }]
   const scannerInstructions = [
     {
       id: 'itero',
@@ -169,51 +173,72 @@ export default function DigitalScansPage() {
                   {/* Left Column - Images */}
                   <div className="bg-white rounded-lg p-6 flex items-center justify-center">
                     {scanner.id === 'itero' && (
-                      <img 
-                        src="/images/itero-scanner.png" 
+                      <Image
+                        src="/images/itero-scanner.png"
                         alt="iTero Scanner Device"
+                        width={360}
+                        height={500}
+                        sizes="(min-width: 1024px) 50vw, 100vw"
                         className="w-full h-auto rounded-lg shadow-md"
                       />
                     )}
                     {scanner.id === '3shape' && (
-                      <img 
-                        src="/images/3-shape-trios-compressor.png" 
+                      <Image
+                        src="/images/3-shape-trios-compressor.png"
                         alt="3Shape TRIOS Scanner"
+                        width={360}
+                        height={500}
+                        sizes="(min-width: 1024px) 50vw, 100vw"
                         className="w-full h-auto rounded-lg shadow-md"
                       />
                     )}
                     {scanner.id === 'cerec' && (
-                      <img 
-                        src="/images/sirona-cerec.png" 
+                      <Image
+                        src="/images/sirona-cerec.png"
                         alt="Sirona CEREC Scanner"
+                        width={360}
+                        height={500}
+                        sizes="(min-width: 1024px) 50vw, 100vw"
                         className="w-full h-auto rounded-lg shadow-md"
                       />
                     )}
                     {scanner.id === '3m' && (
-                      <img 
-                        src="/images/3m-true-def.png" 
+                      <Image
+                        src="/images/3m-true-def.png"
                         alt="3M True Def Scanner"
+                        width={360}
+                        height={500}
+                        sizes="(min-width: 1024px) 50vw, 100vw"
                         className="w-full h-auto rounded-lg shadow-md"
                       />
                     )}
                     {scanner.id === 'carestream' && (
-                      <img 
-                        src="/images/carestream-scanner.png" 
+                      <Image
+                        src="/images/carestream-scanner.png"
                         alt="Carestream Scanner"
+                        width={360}
+                        height={500}
+                        sizes="(min-width: 1024px) 50vw, 100vw"
                         className="w-full h-auto rounded-lg shadow-md"
                       />
                     )}
                     {scanner.id === 'planmeca' && (
-                      <img 
-                        src="/images/planmeca-scanner.png" 
+                      <Image
+                        src="/images/planmeca-scanner.png"
                         alt="Planmeca Scanner"
+                        width={360}
+                        height={500}
+                        sizes="(min-width: 1024px) 50vw, 100vw"
                         className="w-full h-auto rounded-lg shadow-md"
                       />
                     )}
                     {scanner.id === 'medit' && (
-                      <img 
-                        src="/images/medit-i500.png" 
+                      <Image
+                        src="/images/medit-i500.png"
                         alt="Medit i500 Scanner"
+                        width={360}
+                        height={500}
+                        sizes="(min-width: 1024px) 50vw, 100vw"
                         className="w-full h-auto rounded-lg shadow-md"
                       />
                     )}
@@ -269,9 +294,12 @@ export default function DigitalScansPage() {
                             </div>
                             {/* Step Image */}
                             <div className="mt-4 border-2 border-gray-200 rounded-lg overflow-hidden">
-                              <img 
+                              <Image
                                 src={`/images/3shape-step-${idx + 1}.jpg`}
                                 alt={`3Shape Scanner Step ${idx + 1}`}
+                                width={stepDims[idx]?.w ?? 1024}
+                                height={stepDims[idx]?.h ?? 590}
+                                sizes="(min-width: 1024px) 50vw, 100vw"
                                 className="w-full h-auto"
                               />
                             </div>

@@ -186,3 +186,46 @@ export const slaConfig = pgTable('sla_config', {
   rushDays: integer('rush_days').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
+
+// Per-user activity notifications (powers the header bell + web push). A row is
+// written for each recipient when a case changes (new message, status change).
+// Snapshots title/body so the bell renders without extra joins; caseId links
+// back to the case (nullable so the row survives if the case is deleted).
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    caseId: integer('case_id').references(() => cases.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(), // 'message' | 'status' | 'approval'
+    title: text('title').notNull(),
+    body: text('body').notNull().default(''),
+    readAt: timestamp('read_at', { withTimezone: true }), // null = unread
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  t => ({
+    userReadIdx: index('notifications_user_read_idx').on(t.userId, t.readAt),
+    userCreatedIdx: index('notifications_user_created_idx').on(t.userId, t.createdAt),
+  })
+)
+
+// Web Push subscriptions (one per browser/device). Endpoint is unique; the two
+// keys (p256dh + auth) are needed to encrypt the push payload for that device.
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    endpoint: text('endpoint').notNull().unique(),
+    p256dh: text('p256dh').notNull(),
+    auth: text('auth').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  t => ({
+    userIdx: index('push_subscriptions_user_idx').on(t.userId),
+  })
+)

@@ -2,6 +2,7 @@ import Header from '@/components/Header'
 import Footer from '@/components/Footer'
 import PageBackground from '@/components/PageBackground'
 import Link from 'next/link'
+import Image from 'next/image'
 
 export default function IOSLeasingPage() {
   const benefits = [
@@ -237,9 +238,12 @@ export default function IOSLeasingPage() {
             {scannerOptions.map((scanner, index) => (
               <div key={index} className="bg-light p-6 rounded-lg text-center">
                 <div className="bg-white p-4 rounded-lg mb-4">
-                  <img 
-                    src={scanner.image} 
+                  <Image
+                    src={scanner.image}
                     alt={scanner.name}
+                    width={360}
+                    height={500}
+                    sizes="(min-width: 768px) 33vw, 100vw"
                     className="w-full h-48 object-contain"
                   />
                 </div>
