@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import Logo from './Logo'
+import NotificationBell from './NotificationBell'
 
 interface PortalHeaderProps {
   name: string
@@ -66,6 +67,8 @@ export default function PortalHeader({ name, email, role }: PortalHeaderProps) {
             </span>
             <span className="text-xs text-gray-500">{email}</span>
           </div>
+
+          <NotificationBell />
 
           <button
             onClick={handleLogout}

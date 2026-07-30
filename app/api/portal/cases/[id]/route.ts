@@ -6,6 +6,7 @@ import {
   listMessagesForCase,
   updateCaseStatus,
   setScanReceived,
+  getUnreadCounts,
   CASE_STATUSES,
   CASE_STATUS_LABELS,
   type CaseStatus,
@@ -16,6 +17,8 @@ import { clientIp } from '@/lib/rate-limit'
 import { emitCaseUpdate } from '@/lib/case-events'
 import { sendCaseStatusNotification } from '@/lib/email'
 import { getSlaConfigMap } from '@/lib/sla-config'
+import { decodeCaseId } from '@/lib/case-code'
+import { dispatchNotification } from '@/lib/notify-dispatch'
 
 async function getSession(request: NextRequest): Promise<SessionPayload | null> {
   const token = getSessionFromCookies(request.headers.get('cookie'))
@@ -56,10 +59,12 @@ export async function GET(
     ip: clientIp(request),
   })
 
+  const unread = await getUnreadCounts(session.sub, session.role)
   return NextResponse.json({
     case: caseRow,
     messages: await listMessagesForCase(id),
     slaConfig: await getSlaConfigMap(),
+    unreadCount: unread[id] ?? 0,
   })
 }
 
@@ -131,6 +136,21 @@ export async function PATCH(
   })
 
   // Notify the ordering doctor (fire-and-forget; never blocks the response).
+  void (async () => {
+    try {
+      await dispatchNotification({
+        recipientIds: [Number(caseRow.doctorId)],
+        caseId: decodeCaseId(id),
+        caseToken: id,
+        type: 'status',
+        title: caseRow.title,
+        body: `Status: ${CASE_STATUS_LABELS[status as CaseStatus]}`,
+      })
+    } catch (err) {
+      console.error('[notify] status notification failed', err)
+    }
+  })()
+
   void (async () => {
     try {
       const doctor = await findDoctorById(caseRow.doctorId)

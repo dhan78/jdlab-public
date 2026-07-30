@@ -649,17 +649,6 @@ export default function CaseList() {
     }
   }
 
-  // Toggle a case's read state from the list (flag for follow-up / clear).
-  const toggleUnread = async (id: string, isUnread: boolean) => {
-    // Optimistic: flip the badge locally, then reconcile via the refetch.
-    setCases(prev => prev.map(c => (c.id === id ? { ...c, unreadCount: isUnread ? 0 : 1 } : c)))
-    try {
-      await fetch(`/api/portal/cases/${id}/read`, { method: isUnread ? 'POST' : 'DELETE' })
-    } finally {
-      window.dispatchEvent(new Event('cases:changed'))
-    }
-  }
-
   return (
     <div>
             {/* Sticky toolbar: title, scope/sort, and search/filters stay pinned while scrolling */}
@@ -728,7 +717,7 @@ export default function CaseList() {
                       className={`relative inline-flex items-center gap-1 shrink-0 whitespace-nowrap text-xs font-semibold px-2.5 py-1 rounded-md transition duration-150 transform-gpu active:brightness-95 ${unreadOnly ? 'bg-white text-accent ring-2 ring-accent shadow-inner' : 'bg-accent text-white shadow-sm hover:shadow-md motion-safe:hover:scale-105'}`}
                     >
                       {!unreadOnly && (
-                        <span className="absolute -inset-1 rounded-md bg-accent/40 animate-ping" aria-hidden="true" />
+                        <span className="pointer-events-none absolute -inset-1 rounded-md bg-accent/40 animate-ping" aria-hidden="true" />
                       )}
                       <span className="relative inline-flex items-center gap-1.5">
                         {unreadOnly ? (
@@ -999,18 +988,10 @@ export default function CaseList() {
                               </span>
                               {(c.unreadCount ?? 0) > 0 && (
                                 <span className="relative inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-accent text-white text-[11px] font-semibold tabular-nums" title={`${c.unreadCount} new message${c.unreadCount === 1 ? '' : 's'}`}>
-                                  <span className="absolute -inset-1 rounded-full bg-accent/50 animate-ping" aria-hidden="true" />
+                                  <span className="pointer-events-none absolute -inset-1 rounded-full bg-accent/50 animate-ping" aria-hidden="true" />
                                   <span className="relative">{c.unreadCount}</span>
                                 </span>
                               )}
-                              <button
-                                type="button"
-                                onClick={e => { e.preventDefault(); e.stopPropagation(); void toggleUnread(c.id, (c.unreadCount ?? 0) > 0) }}
-                                className="text-xs text-slate-400 hover:text-primary underline decoration-dotted underline-offset-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
-                                aria-label={(c.unreadCount ?? 0) > 0 ? 'Mark as read' : 'Mark as unread'}
-                              >
-                                {(c.unreadCount ?? 0) > 0 ? 'Mark read' : 'Mark unread'}
-                              </button>
                             </div>
                           </div>
 

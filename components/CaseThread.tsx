@@ -13,6 +13,21 @@ import {
 import { computeSla, SLA_CHIP, type SlaConfigMap } from '@/lib/sla'
 import { subscribeCaseEvents } from '@/lib/portal-stream'
 import { track } from '@/lib/telemetry'
+import dynamic from 'next/dynamic'
+import HtmlViewer from './HtmlViewer'
+
+// The 3D scan viewer is heavy + WebGL-only, so load it lazily and client-side
+// only, and render it just for attachments that are actually models (.stl/.ply).
+const ScanViewer = dynamic(() => import('./ScanViewer'), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-72 items-center justify-center text-sm text-slate-400">Loading 3D viewer…</div>
+  ),
+})
+const isModelFile = (name: string) => /\.(stl|ply)$/i.test(name)
+// exocad WebViewer (and similar tools) export a self-contained interactive HTML
+// file for design / treatment-plan verification — render it inline, sandboxed.
+const isHtmlViewer = (name: string) => /\.html?$/i.test(name)
 
 type Role = 'doctor' | 'planner' | 'admin'
 
@@ -102,7 +117,13 @@ function IconCalendar({ className = 'w-4 h-4' }: { className?: string }) {
   return (<svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12" rx="2" /><path d="M3 8h14M7 3v3M13 3v3" strokeLinecap="round" /></svg>)
 }
 
-const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024        // inline base64 (no-S3 fallback)
+const MAX_UPLOAD_BYTES = 150 * 1024 * 1024          // direct-to-S3 (presigned PUT)
+
+// One-tap design sign-off. Posted as a normal, NON-BLOCKING thread message — it
+// never gates the ship date (doctors don't want to be the bottleneck); the lab
+// proceeds on the SLA clock. Issues just go through the normal comment thread.
+const APPROVAL_MESSAGE = '✅ Approved the design'
 
 function formatTime(iso: string): string {
   try {
@@ -137,10 +158,11 @@ function formatDate(iso: string): string {
 }
 
 interface PendingAttachment {
+  file: File
   name: string
   mimeType: string
   size: number
-  dataUrl: string
+  dataUrl?: string // base64, small files only — used for the no-S3 fallback
 }
 
 // Full-screen image viewer with drag-to-pan (mouse + touch), pinch/scroll zoom,
@@ -335,6 +357,7 @@ export default function CaseThread({
 
   const [body, setBody] = useState('')
   const [pending, setPending] = useState<PendingAttachment[]>([])
+  const [approving, setApproving] = useState(false)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
   const [statusSaving, setStatusSaving] = useState(false)
@@ -343,11 +366,14 @@ export default function CaseThread({
 
   // Realtime "typing" indicator for the other participant.
   const [typingName, setTypingName] = useState<string | null>(null)
+  const [unreadCount, setUnreadCount] = useState(0)
   const typingClearRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastTypingSentRef = useRef(0)
   const lastReadRef = useRef(0)
 
   const isLab = currentUserRole === 'planner' || currentUserRole === 'admin'
+  // Design already signed off? (doctor posted the approval at least once)
+  const hasApproved = messages.some(m => m.authorRole === 'doctor' && m.body === APPROVAL_MESSAGE)
 
   // Mark this case read for the current user (fire-and-forget) and let the
   // dashboard/sidebar refresh their unread badges. Throttled so a burst of
@@ -357,6 +383,14 @@ export default function CaseThread({
     if (!force && now - lastReadRef.current < 3000) return
     lastReadRef.current = now
     void fetch(`/api/portal/cases/${caseId}/read`, { method: 'POST' })
+      .then(() => window.dispatchEvent(new Event('cases:changed')))
+      .catch(() => {})
+  }, [caseId])
+
+  // Mark this case unread again (explicit — mirrors the read action). Lives in
+  // the conversation header, not the list.
+  const markUnread = useCallback(() => {
+    void fetch(`/api/portal/cases/${caseId}/read`, { method: 'DELETE' })
       .then(() => window.dispatchEvent(new Event('cases:changed')))
       .catch(() => {})
   }, [caseId])
@@ -374,13 +408,17 @@ export default function CaseThread({
       setCaseDetail(data.case)
       setMessages(data.messages ?? [])
       setSlaConfig(data.slaConfig ?? {})
-      markRead(true)
+      setUnreadCount(data.unreadCount ?? 0)
+      // This GET recorded a case.view (audit); nudge the recently-viewed rail +
+      // list to refresh so the just-opened case surfaces at the top. (Opening no
+      // longer marks the case read, so this refresh had to be decoupled from it.)
+      window.dispatchEvent(new Event('cases:changed'))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load this case.')
     } finally {
       setLoading(false)
     }
-  }, [caseId, markRead])
+  }, [caseId])
 
   useEffect(() => { fetchThread() }, [fetchThread])
 
@@ -396,11 +434,11 @@ export default function CaseThread({
       setCaseDetail(data.case)
       setMessages(data.messages ?? [])
       setSlaConfig(data.slaConfig ?? {})
-      markRead() // we're viewing, so keep it read
+      setUnreadCount(data.unreadCount ?? 0)
     } catch {
       /* transient; the stream will prompt again on the next update */
     }
-  }, [caseId, markRead])
+  }, [caseId])
 
   // Refetch this thread when the tab regains focus/visibility. A backgrounded
   // mobile tab freezes and drops the SSE stream, so on reopen the conversation
@@ -454,17 +492,22 @@ export default function CaseThread({
     setSendError('')
     const next: PendingAttachment[] = []
     for (const file of Array.from(files)) {
-      if (file.size > MAX_ATTACHMENT_BYTES) {
-        setSendError(`"${file.name}" exceeds the 8MB limit.`)
+      if (file.size > MAX_UPLOAD_BYTES) {
+        setSendError(`"${file.name}" exceeds the ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB limit.`)
         continue
       }
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(reader.result as string)
-        reader.onerror = () => reject(reader.error)
-        reader.readAsDataURL(file)
-      })
-      next.push({ name: file.name, mimeType: file.type, size: file.size, dataUrl })
+      // Only small files are base64-read (for the no-S3 fallback); large files
+      // upload straight to S3 at send time, so we keep just the File here.
+      let dataUrl: string | undefined
+      if (file.size <= MAX_ATTACHMENT_BYTES) {
+        dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.onerror = () => reject(reader.error)
+          reader.readAsDataURL(file)
+        })
+      }
+      next.push({ file, name: file.name, mimeType: file.type, size: file.size, dataUrl })
     }
     setPending(prev => [...prev, ...next])
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -474,20 +517,62 @@ export default function CaseThread({
     setPending(prev => prev.filter((_, i) => i !== index))
   }
 
+  // Resolve one pending file into a message attachment: upload directly to S3
+  // via a presigned PUT when configured, else fall back to inline base64 (small
+  // files only). Returns null (and surfaces an error) if it can't be attached.
+  const resolveAttachment = async (
+    p: PendingAttachment
+  ): Promise<{ name: string; mimeType: string; size: number; s3Key?: string; dataUrl?: string } | null> => {
+    const meta = { name: p.name, mimeType: p.mimeType, size: p.size }
+    const pres = await fetch(`/api/portal/cases/${caseId}/attachments/presign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(meta),
+    })
+    if (pres.ok) {
+      const { uploadUrl, key, contentType } = await pres.json()
+      const put = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': contentType },
+        body: p.file,
+      })
+      if (!put.ok) {
+        setSendError(`Upload of "${p.name}" failed. Please try again.`)
+        return null
+      }
+      return { ...meta, s3Key: key }
+    }
+    if (pres.status === 501) {
+      // Direct upload not configured (dev): base64 fallback for small files only.
+      if (p.dataUrl) return { ...meta, dataUrl: p.dataUrl }
+      setSendError(`"${p.name}" is too large to attach in this environment.`)
+      return null
+    }
+    const err = await pres.json().catch(() => ({}))
+    setSendError(err.error ?? `Could not prepare upload for "${p.name}".`)
+    return null
+  }
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!body.trim() && pending.length === 0) return
     setSending(true)
     setSendError('')
     try {
+      const resolved: Array<{ name: string; mimeType: string; size: number; s3Key?: string; dataUrl?: string }> = []
+      for (const p of pending) {
+        const r = await resolveAttachment(p)
+        if (!r) return // error already surfaced; keep the composer state
+        resolved.push(r)
+      }
       const res = await fetch(`/api/portal/cases/${caseId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: body.trim(), attachments: pending }),
+        body: JSON.stringify({ body: body.trim(), attachments: resolved }),
       })
       const data = await res.json()
       if (res.ok) {
-        track('message_send', { caseId, len: body.trim().length, attachments: pending.length })
+        track('message_send', { caseId, len: body.trim().length, attachments: resolved.length })
         setMessages(data.messages ?? [])
         setBody('')
         setPending([])
@@ -498,6 +583,32 @@ export default function CaseThread({
       setSendError('An unexpected error occurred.')
     } finally {
       setSending(false)
+    }
+  }
+
+  // Dentist one-tap approval — a fast sign-off, not a gate. Posts the approval to
+  // the thread (SSE + notifies the lab) without touching status or the SLA clock.
+  const handleApprove = async () => {
+    if (approving || sending) return
+    setApproving(true)
+    setSendError('')
+    try {
+      const res = await fetch(`/api/portal/cases/${caseId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: APPROVAL_MESSAGE }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        track('design_approved', { caseId })
+        setMessages(data.messages ?? [])
+      } else {
+        setSendError(data.error ?? 'Could not send approval.')
+      }
+    } catch {
+      setSendError('An unexpected error occurred.')
+    } finally {
+      setApproving(false)
     }
   }
 
@@ -626,6 +737,24 @@ export default function CaseThread({
               )}
             </div>
             <div className="flex items-center gap-3">
+              {(() => {
+                const read = unreadCount === 0
+                return (
+                  <button
+                    type="button"
+                    onClick={() => { if (read) { markUnread(); setUnreadCount(1) } else { markRead(true); setUnreadCount(0) } }}
+                    title={read ? 'Mark this case as unread' : 'Mark this case as read'}
+                    className="inline-flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg border border-primary/40 bg-primary/5 text-primary hover:bg-primary/10 transition"
+                  >
+                    {read ? (
+                      <span className="w-2 h-2 rounded-full bg-accent" aria-hidden="true" />
+                    ) : (
+                      <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M4 10.5l3.5 3.5L16 5.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    )}
+                    {read ? 'Mark as unread' : `Mark as read${unreadCount > 1 ? ` (${unreadCount})` : ''}`}
+                  </button>
+                )
+              })()}
               {isLab && !caseDetail.scanReceivedAt && caseDetail.status !== 'shipped' && (
                 <button
                   type="button"
@@ -717,6 +846,32 @@ export default function CaseThread({
                               className="max-h-44 rounded-xl border border-slate-200 cursor-zoom-in hover:opacity-95 transition-opacity"
                             />
                           </button>
+                        ) : isModelFile(a.name) ? (
+                          <div key={a.id} className="basis-full">
+                            <div className="h-72 w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
+                              <ScanViewer url={a.dataUrl} className="h-full w-full" />
+                            </div>
+                            <a
+                              href={a.dataUrl}
+                              download={a.name}
+                              className="mt-1 inline-flex items-center gap-1 text-xs text-slate-500 hover:text-primary"
+                            >
+                              {a.name} <span className="text-slate-400">({formatSize(a.size)})</span>
+                            </a>
+                          </div>
+                        ) : isHtmlViewer(a.name) ? (
+                          <div key={a.id} className="basis-full">
+                            <div className="h-96 w-full overflow-hidden rounded-xl border border-slate-200 bg-white">
+                              <HtmlViewer dataUrl={a.dataUrl} className="h-full w-full border-0" />
+                            </div>
+                            <a
+                              href={a.dataUrl}
+                              download={a.name}
+                              className="mt-1 inline-flex items-center gap-1 text-xs text-slate-500 hover:text-primary"
+                            >
+                              {a.name} <span className="text-slate-400">({formatSize(a.size)}) · treatment-plan viewer</span>
+                            </a>
+                          </div>
                         ) : (
                           <a
                             key={a.id}
@@ -783,17 +938,41 @@ export default function CaseThread({
           )}
 
           <div className="mt-3 flex items-center justify-between">
-            <label className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-primary cursor-pointer transition-colors">
-              <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M13 7l-5.5 5.5a2 2 0 0 0 2.8 2.8L16 9a3.5 3.5 0 0 0-5-5l-6 6a5 5 0 0 0 7 7l5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-              Attach files
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                onChange={e => handleFiles(e.target.files)}
-                className="sr-only"
-              />
-            </label>
+            <div className="flex items-center gap-4">
+              <label className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-primary cursor-pointer transition-colors">
+                <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M13 7l-5.5 5.5a2 2 0 0 0 2.8 2.8L16 9a3.5 3.5 0 0 0-5-5l-6 6a5 5 0 0 0 7 7l5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                Attach files
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={e => handleFiles(e.target.files)}
+                  className="sr-only"
+                />
+              </label>
+              {currentUserRole === 'doctor' && (
+                hasApproved ? (
+                  <span
+                    className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700"
+                    title="You've approved this design"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M4 10.5l3.5 3.5L16 5.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    Design approved
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleApprove}
+                    disabled={approving || sending}
+                    title="Approve the design — a quick sign-off; does not delay shipping"
+                    className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition disabled:opacity-50"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M4 10.5l3.5 3.5L16 5.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    {approving ? 'Approving…' : 'Approve design'}
+                  </button>
+                )
+              )}
+            </div>
             <button
               type="submit"
               disabled={sending || (!body.trim() && pending.length === 0)}

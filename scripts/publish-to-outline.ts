@@ -30,7 +30,9 @@
  * drop its siblings from that page.
  */
 import { readFile, readdir, stat } from 'node:fs/promises'
-import { extname, join, relative, sep } from 'node:path'
+import { dirname, extname, join, relative, sep } from 'node:path'
+import { execSync } from 'node:child_process'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 
 const API = (process.env.OUTLINE_URL ?? 'https://app.getoutline.com/api').replace(/\/+$/, '')
 const TOKEN = process.env.OUTLINE_TOKEN
@@ -245,15 +247,110 @@ async function existingTreeFilesExcluding(
   return out
 }
 
+// --- Incremental publish support -------------------------------------------
+// Baseline = the last commit whose state is mirrored in Outline. Stored locally
+// (gitignored, machine-local) and advanced only after a full or --changed run.
+const BASELINE_FILE = join(ROOT, '.outline', 'last-published')
+
+function isDir(p: string): boolean {
+  try { return statSync(join(ROOT, p)).isDirectory() } catch { return false }
+}
+// Folder targets each own their own child doc; the top-level files all share the
+// ONE "root" child doc, so touching any of them must republish the WHOLE set
+// (otherwise a partial publish would drop the untouched siblings from that doc).
+const TARGET_FOLDERS = DEFAULT_TARGETS.filter(isDir)
+const ROOT_FILES = DEFAULT_TARGETS.filter(t => !isDir(t))
+
+function git(cmd: string): string {
+  return execSync(`git ${cmd}`, { cwd: ROOT, encoding: 'utf8' }).trim()
+}
+function gitLines(cmd: string): string[] {
+  try { return git(cmd).split('\n').map(s => s.trim()).filter(Boolean) } catch { return [] }
+}
+function isValidRef(ref: string): boolean {
+  try { git(`rev-parse --verify --quiet ${ref}`); return true } catch { return false }
+}
+function writeBaseline(): void {
+  try {
+    mkdirSync(dirname(BASELINE_FILE), { recursive: true })
+    writeFileSync(BASELINE_FILE, git('rev-parse HEAD') + '\n')
+  } catch (e) {
+    console.error('warn: could not write publish baseline:', (e as Error).message)
+  }
+}
+
+// Files changed since `baseline` -> the CLI targets to republish: each changed
+// folder group, plus the FULL root file set if any top-level file moved.
+function targetsForChanges(baseline: string): { targets: string[]; changed: string[] } {
+  const committed = gitLines(`diff --name-only ${baseline} -- .`)
+  const untracked = gitLines('ls-files --others --exclude-standard')
+  const changed = [...new Set([...committed, ...untracked])]
+
+  const folderSet = new Set(TARGET_FOLDERS)
+  const rootFileSet = new Set(ROOT_FILES)
+  const groups = new Set<string>()
+  let rootTouched = false
+  for (const f of changed) {
+    if (f.includes('/')) {
+      const top = f.split('/')[0]
+      if (folderSet.has(top)) groups.add(top)
+    } else if (rootFileSet.has(f)) {
+      rootTouched = true
+    }
+  }
+  const targets = [...groups]
+  if (rootTouched) targets.push(...ROOT_FILES)
+  return { targets, changed }
+}
+
 async function main() {
   const docId = resolveDocId()
-  // Separate CLI flags from folder/file targets. Passing explicit targets is a
-  // PARTIAL publish: only those top-level folders' child docs are rewritten and
+  // Flags: --changed (publish only what changed since the last publish
+  // baseline), --since=<ref> (override the baseline). Non-flag args are explicit
+  // targets: an explicit PARTIAL publish rewrites only those groups' child docs;
   // the parent index tree is MERGED (not replaced) so the overview stays whole.
   const argv = process.argv.slice(2)
+  const changedMode = argv.includes('--changed')
+  const dryRun = argv.includes('--dry-run')
+  const sinceArg = argv.find(a => a.startsWith('--since='))?.split('=')[1]
   const argTargets = argv.filter(a => !a.startsWith('--'))
-  const isPartial = argTargets.length > 0
-  const targets = isPartial ? argTargets : DEFAULT_TARGETS
+
+  let targets: string[]
+  let isPartial: boolean
+  let advanceBaseline: boolean
+
+  if (changedMode) {
+    let baseline = sinceArg ?? (existsSync(BASELINE_FILE) ? readFileSync(BASELINE_FILE, 'utf8').trim() : '')
+    if (baseline && !isValidRef(baseline)) {
+      console.error(`baseline ${baseline.slice(0, 8)} is not a valid commit — doing a FULL publish to reset it.`)
+      baseline = ''
+    }
+    if (!baseline) {
+      console.error('No publish baseline (.outline/last-published) — FULL publish to establish it.')
+      targets = DEFAULT_TARGETS
+      isPartial = false
+    } else {
+      const { targets: t, changed } = targetsForChanges(baseline)
+      if (t.length === 0) {
+        console.log(`Nothing to publish: no tracked changes under known targets since ${baseline.slice(0, 8)}.`)
+        writeBaseline()
+        return
+      }
+      console.log(
+        `Changed since ${baseline.slice(0, 8)} (${changed.length} file(s)) → groups: ` +
+          `${[...new Set(t.map(x => (ROOT_FILES.includes(x) ? 'root' : x)))].sort().join(', ')}`,
+      )
+      targets = t
+      isPartial = true
+    }
+    advanceBaseline = true
+  } else {
+    isPartial = argTargets.length > 0
+    targets = isPartial ? argTargets : DEFAULT_TARGETS
+    // A full publish covers everything -> safe to advance the baseline. A manual
+    // partial does NOT (other folders may have unpublished changes), so leave it.
+    advanceBaseline = !isPartial
+  }
 
   const files: string[] = []
   for (const t of targets) {
@@ -270,6 +367,14 @@ async function main() {
   }
   for (const rel of unique) console.log(`+ ${rel}`)
 
+  if (dryRun) {
+    const g = [...new Set(unique.map(topOf))].sort()
+    console.log(
+      `\n[dry-run] would ${isPartial ? `partial-publish: ${g.join(', ')}` : 'FULL publish'} ` +
+        `(${unique.length} file(s)). No changes made to Outline.`,
+    )
+    return
+  }
   // A single Outline document can't hold the whole repo (gateway 502 past ~560KB),
   // so publish a parent index doc + one child document per top-level folder.
   const info = await api<{ data: { id: string; title: string; url: string; collectionId: string } }>(
@@ -322,6 +427,11 @@ async function main() {
     `\nDone: ${isPartial ? 'partial ' : ''}sync of ${unique.length} file(s) across ` +
       `${groupNames.length} child document(s)${isPartial ? ` (${treeFiles.length} in the merged index tree)` : ''}.`,
   )
+
+  if (advanceBaseline) {
+    writeBaseline()
+    console.log(`baseline → ${git('rev-parse --short HEAD')} (.outline/last-published)`)
+  }
 }
 
 main().catch(e => {
