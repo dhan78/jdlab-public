@@ -19,6 +19,7 @@ import { sendCaseStatusNotification } from '@/lib/email'
 import { getSlaConfigMap } from '@/lib/sla-config'
 import { decodeCaseId } from '@/lib/case-code'
 import { dispatchNotification } from '@/lib/notify-dispatch'
+import { captureError, newReqId, sidFromCookie } from '@/lib/error-log'
 
 async function getSession(request: NextRequest): Promise<SessionPayload | null> {
   const token = getSessionFromCookies(request.headers.get('cookie'))
@@ -148,6 +149,7 @@ export async function PATCH(
       })
     } catch (err) {
       console.error('[notify] status notification failed', err)
+      captureError(err, { route: 'PATCH /api/portal/cases/[id]', method: 'PATCH', detail: 'status notification', caseToken: id, reqId: newReqId(), sid: sidFromCookie(request.headers.get('cookie')) })
     }
   })()
 
@@ -166,6 +168,7 @@ export async function PATCH(
       }
     } catch (err) {
       console.error('[email] status notification failed', err)
+      captureError(err, { route: 'PATCH /api/portal/cases/[id]', method: 'PATCH', detail: 'status email', caseToken: id, reqId: newReqId(), sid: sidFromCookie(request.headers.get('cookie')) })
     }
   })()
 

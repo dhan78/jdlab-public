@@ -41,6 +41,14 @@ function sessionId(): string {
       s = crypto.randomUUID()
       window.sessionStorage.setItem(SID_KEY, s)
     }
+    // Mirror the session id into a (non-HttpOnly) cookie so the SERVER can stamp
+    // its error records with the same sid — tying server errors into this
+    // session's interaction timeline. Not sensitive: it's a random id.
+    try {
+      document.cookie = `jdlab_sid=${s}; path=/; max-age=86400; samesite=lax`
+    } catch {
+      /* cookies blocked — server-side sid correlation just won't be available */
+    }
     return s
   } catch {
     // sessionStorage blocked — fall back to a per-load id.

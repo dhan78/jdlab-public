@@ -21,7 +21,12 @@ interface SessionRow {
 interface EventRow {
   sid: string | null
   ev: string
+  kind?: string | null
+  req_id?: string | null
+  message?: string | null
+  name?: string | null
   client_t: number | null
+  ingest_t?: number
   url: string | null
   props?: Record<string, unknown>
 }
@@ -75,6 +80,12 @@ function describe(e: EventRow): { icon: string; label: string; detail?: string }
     case 'sort_change': return { icon: '↕', label: `Sort → ${p.sort ?? ''}` }
     case 'new_case_toggle': return { icon: '＋', label: `New-case form ${p.open ? 'opened' : 'closed'}` }
     case 'rail_toggle': return { icon: '◧', label: `Recently-viewed ${p.open ? 'shown' : 'hidden'}` }
+    case 'client_error':
+    case 'app_error': {
+      const raw = e.message ?? (typeof p.message === 'string' ? p.message : '')
+      const msg = raw || 'Error'
+      return { icon: '⛔', label: `Error: ${msg}`, detail: e.name ?? (e.ev === 'client_error' ? 'browser' : undefined) }
+    }
     default: return { icon: '•', label: e.ev, detail: Object.keys(p).length ? JSON.stringify(p) : undefined }
   }
 }
@@ -123,7 +134,7 @@ export default function TelemetryViewer() {
   const copySteps = () => {
     const lines = events.map(e => {
       const d = describe(e)
-      return `${fmtTime(e.client_t)}  ${d.label}${d.detail ? ` — ${d.detail}` : ''}`
+      return `${fmtTime(e.client_t ?? e.ingest_t ?? null)}  ${d.label}${d.detail ? ` — ${d.detail}` : ''}`
     })
     void navigator.clipboard?.writeText(lines.join('\n'))
   }
@@ -133,7 +144,7 @@ export default function TelemetryViewer() {
     const rows: Array<{ kind: 'gap'; ms: number } | { kind: 'ev'; e: EventRow }> = []
     let prev: number | null = null
     for (const e of events) {
-      const t = e.client_t
+      const t = e.client_t ?? e.ingest_t ?? null
       if (prev != null && t != null && t - prev > 30_000) rows.push({ kind: 'gap', ms: t - prev })
       rows.push({ kind: 'ev', e })
       if (t != null) prev = t
@@ -220,18 +231,24 @@ export default function TelemetryViewer() {
                     ·· {fmtDuration(0, row.ms)} idle ··
                     <span className="flex-1 border-t border-dashed border-slate-200" />
                   </li>
-                ) : (
-                  <li key={i} className="flex items-start gap-3 py-1">
+                ) : (() => {
+                  const e = row.e
+                  const d = describe(e)
+                  const isErr = e.kind === 'error' || e.ev === 'client_error' || e.ev === 'app_error'
+                  const t = e.client_t ?? e.ingest_t ?? null
+                  return (
+                  <li key={i} className={`flex items-start gap-3 py-1 ${isErr ? 'bg-red-50 -mx-2 px-2 rounded' : ''}`}>
                     <span className="w-16 shrink-0 text-[11px] tabular-nums text-slate-400 pt-0.5">
-                      {row.e.client_t ? new Date(row.e.client_t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}
+                      {t ? new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}
                     </span>
-                    <span className="w-5 shrink-0 text-center text-slate-500">{describe(row.e).icon}</span>
+                    <span className={`w-5 shrink-0 text-center ${isErr ? 'text-red-500' : 'text-slate-500'}`}>{d.icon}</span>
                     <span className="min-w-0">
-                      <span className="text-sm text-slate-800">{describe(row.e).label}</span>
-                      {describe(row.e).detail && <span className="text-xs text-slate-500 ml-2">{describe(row.e).detail}</span>}
+                      <span className={`text-sm ${isErr ? 'text-red-700 font-medium' : 'text-slate-800'}`}>{d.label}</span>
+                      {d.detail && <span className="text-xs text-slate-500 ml-2">{d.detail}</span>}
                     </span>
                   </li>
-                )
+                  )
+                })()
               )}
             </ol>
           </>

@@ -275,6 +275,9 @@ export default function CaseList() {
   // Condense the sticky toolbar once the page is scrolled, to reclaim height.
   const [condensed, setCondensed] = useState(false)
   const [totalUnread, setTotalUnread] = useState(0)
+  // SLA config drives the turnaround chips; loaded alongside the case list.
+  // Declared here (before fetchCases) so its setter exists where it's used.
+  const [slaConfig, setSlaConfig] = useState<SlaConfigMap>({})
   // Pagination: 20/page for doctors, 50/page for the lab work queue.
   const [page, setPage] = useState(1)
 
@@ -332,7 +335,6 @@ export default function CaseList() {
   // Live clock so SLA chips recompute on their own as time passes (e.g. "due
   // today" rolls to "overdue" at midnight) without needing a refetch.
   const [now, setNow] = useState(() => new Date())
-  const [slaConfig, setSlaConfig] = useState<SlaConfigMap>({})
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60_000)
     return () => clearInterval(t)
@@ -644,6 +646,9 @@ export default function CaseList() {
     setUnreadOnly(false)
     try {
       window.sessionStorage.setItem('jdlab.unreadOnly', '0')
+      // Also drop the consolidated view snapshot, otherwise a full refresh
+      // (e.g. mobile pull-to-refresh) rehydrates the just-cleared filters.
+      window.sessionStorage.removeItem(LIST_STATE_KEY)
     } catch {
       /* ignore storage errors */
     }

@@ -15,6 +15,7 @@ import { emitCaseUpdate } from '@/lib/case-events'
 import { decodeCaseId } from '@/lib/case-code'
 import { getLabUserIds } from '@/lib/notifications'
 import { dispatchNotification } from '@/lib/notify-dispatch'
+import { captureError, newReqId, sidFromCookie } from '@/lib/error-log'
 
 // Per-attachment cap (~8MB of raw bytes) for the INLINE base64 path (rides the
 // JSON body). Directly-uploaded (presigned PUT) attachments use the larger cap.
@@ -212,6 +213,7 @@ export async function POST(
       })
     } catch (err) {
       console.error('[notify] message notification failed', err)
+      captureError(err, { route: 'POST /api/portal/cases/[id]/messages', method: 'POST', detail: 'message notification', caseToken: id, reqId: newReqId(), sid: sidFromCookie(request.headers.get('cookie')) })
     }
   })()
 
@@ -245,6 +247,7 @@ export async function POST(
       }
     } catch (err) {
       console.error('[email] message notification failed', err)
+      captureError(err, { route: 'POST /api/portal/cases/[id]/messages', method: 'POST', detail: 'message email', caseToken: id, reqId: newReqId(), sid: sidFromCookie(request.headers.get('cookie')) })
     }
   })()
 

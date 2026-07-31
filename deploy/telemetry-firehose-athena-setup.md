@@ -24,8 +24,10 @@ Run everything below in **AWS CloudShell** (bash) in the account/region that hos
 export AWS_REGION=us-east-1
 export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
-export DATA_BUCKET=jdlab-telemetry            # where Parquet lands (create or reuse)
-export RESULTS_BUCKET=jdlab-athena-results    # Athena query output (can be same bucket, diff prefix)
+export DATA_BUCKET=jdlab-docs-bucket-hpncyz    # existing app docs bucket (not created here)
+export DATA_PREFIX=telemetry                    # logical "data bucket": s3://$DATA_BUCKET/$DATA_PREFIX/
+export RESULTS_BUCKET=jdlab-docs-bucket-hpncyz # same bucket for Athena query output
+export ATHENA_PREFIX=athena                     # Athena results: s3://$RESULTS_BUCKET/$ATHENA_PREFIX/
 export GLUE_DB=jdlab
 export GLUE_TABLE=telemetry
 export STREAM=jdlab-telemetry                 # Firehose delivery stream name
@@ -35,23 +37,25 @@ export FH_ROLE=jdlab-firehose-telemetry       # IAM role Firehose assumes
 
 ---
 
-## 1. S3 buckets (skip create if they already exist)
+## 1. S3 bucket (reusing your existing app docs bucket)
 
-```bash
-aws s3api create-bucket --bucket "$DATA_BUCKET" --region "$AWS_REGION" \
-  $( [ "$AWS_REGION" = us-east-1 ] || echo --create-bucket-configuration LocationConstraint=$AWS_REGION )
+`jdlab-docs-bucket-hpncyz` already exists — it's your app's attachment/docs bucket, already
+encrypted (SSE-S3) with public access blocked from when it was provisioned. Telemetry is a
+self-contained namespace **inside** that bucket at the `$DATA_PREFIX/` (default `telemetry/`)
+prefix, with Athena output under `$ATHENA_PREFIX/` (default `athena/`) — isolated from your
+existing objects, so **there is nothing to create here — skip to §2.**
 
-aws s3api create-bucket --bucket "$RESULTS_BUCKET" --region "$AWS_REGION" \
-  $( [ "$AWS_REGION" = us-east-1 ] || echo --create-bucket-configuration LocationConstraint=$AWS_REGION )
-
-# Default encryption (SSE-S3) + block public access, on both
-for B in "$DATA_BUCKET" "$RESULTS_BUCKET"; do
-  aws s3api put-bucket-encryption --bucket "$B" --server-side-encryption-configuration \
-    '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
-  aws s3api put-public-access-block --bucket "$B" --public-access-block-configuration \
-    BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
-done
-```
+> Prefer a dedicated telemetry bucket instead? Point `DATA_BUCKET`/`RESULTS_BUCKET` at a new
+> name in §0 and create it:
+>
+> ```bash
+> aws s3api create-bucket --bucket "$DATA_BUCKET" --region "$AWS_REGION" \
+>   $( [ "$AWS_REGION" = us-east-1 ] || echo --create-bucket-configuration LocationConstraint=$AWS_REGION )
+> aws s3api put-bucket-encryption --bucket "$DATA_BUCKET" --server-side-encryption-configuration \
+>   '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+> aws s3api put-public-access-block --bucket "$DATA_BUCKET" --public-access-block-configuration \
+>   BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+> ```
 
 ---
 
@@ -69,20 +73,39 @@ partitions ever need registering.
 
 ```sql
 CREATE EXTERNAL TABLE IF NOT EXISTS jdlab.telemetry (
-  sid       string,
-  ev        string,
-  client_t  bigint,
-  url       string,
-  props     string,      -- JSON string; use json_extract() in queries
-  uid       string,
-  role      string,
-  ingest_t  bigint,
-  ip        string,
-  ua        string
+  sid        string,
+  ev         string,
+  kind       string,     -- 'error' for app/client errors (else null)
+  level      string,     -- 'error' (else null)
+  client_t   bigint,
+  url        string,
+  props      string,      -- JSON string; use json_extract() in queries
+  uid        string,
+  role       string,
+  ingest_t   bigint,
+  ip         string,
+  ua         string,
+  -- application error fields (lib/error-log.ts + instrumentation.ts onRequestError).
+  -- The table schema is the UNION of interaction + error records; a row simply
+  -- leaves the columns it doesn't use as NULL. New columns are appended LAST so
+  -- Parquet ordinal mapping of older files stays valid.
+  message    string,
+  name       string,
+  stack      string,
+  route      string,
+  method     string,
+  route_type string,
+  status     int,
+  case_token string,
+  detail     string,
+  env        string,
+  -- correlation: req_id groups one request / ingest-batch; sid (first column) ties
+  -- a server error into the client's interaction-event timeline for that session.
+  req_id     string
 )
 PARTITIONED BY (dt string)
 STORED AS PARQUET
-LOCATION 's3://jdlab-telemetry/telemetry/'
+LOCATION 's3://jdlab-docs-bucket-hpncyz/telemetry/'   -- = s3://$DATA_BUCKET/$DATA_PREFIX/
 TBLPROPERTIES (
   'parquet.compression'='SNAPPY',
   'projection.enabled'='true',
@@ -91,18 +114,39 @@ TBLPROPERTIES (
   'projection.dt.format'='yyyy-MM-dd',
   'projection.dt.interval'='1',
   'projection.dt.interval.unit'='DAYS',
-  'storage.location.template'='s3://jdlab-telemetry/telemetry/dt=${dt}/'
+  'storage.location.template'='s3://jdlab-docs-bucket-hpncyz/telemetry/dt=${dt}/'  -- s3://$DATA_BUCKET/$DATA_PREFIX/dt=${dt}/
 );
 ```
+
+> **Application errors flow through this same table.** `lib/error-log.ts` (+ the
+> `instrumentation.ts` `onRequestError` hook and `client_error` events) ship records
+> flagged `kind='error'`. Those carry the `message/name/stack/route/method/route_type/
+> status/case_token/detail/env` columns above, plus **`req_id`** (a per-request
+> correlation id) and **`sid`** (the client session id, mirrored into the `jdlab_sid`
+> cookie by the telemetry client) so a server error ties into that session's
+> interaction-event timeline. **Firehose drops any field not in the Glue table**, so
+> if you add more record fields later, add matching columns here too.
+>
+> **If the table already exists**, don't recreate — append the new columns (safe, they
+> map to NULL for old files):
+> ```sql
+> ALTER TABLE jdlab.telemetry ADD COLUMNS (
+>   kind string, level string, message string, name string, stack string,
+>   route string, method string, route_type string, status int,
+>   case_token string, detail string, env string, req_id string
+> );
+> ```
+> Firehose uses `SchemaConfiguration.VersionId=LATEST`, so it picks up the new
+> columns automatically on the next flush — no stream change needed.
 
 Run that DDL from CloudShell (replace bucket names if you changed the vars):
 
 ```bash
 # Create the Athena workgroup first (used to run the DDL and all queries)
 aws athena create-work-group --name "$WORKGROUP" --region "$AWS_REGION" \
-  --configuration "ResultConfiguration={OutputLocation=s3://$RESULTS_BUCKET/athena/}"
+  --configuration "ResultConfiguration={OutputLocation=s3://$RESULTS_BUCKET/$ATHENA_PREFIX/}"
 
-DDL="CREATE EXTERNAL TABLE IF NOT EXISTS $GLUE_DB.$GLUE_TABLE (sid string, ev string, client_t bigint, url string, props string, uid string, role string, ingest_t bigint, ip string, ua string) PARTITIONED BY (dt string) STORED AS PARQUET LOCATION 's3://$DATA_BUCKET/telemetry/' TBLPROPERTIES ('parquet.compression'='SNAPPY','projection.enabled'='true','projection.dt.type'='date','projection.dt.range'='2026-01-01,NOW','projection.dt.format'='yyyy-MM-dd','projection.dt.interval'='1','projection.dt.interval.unit'='DAYS','storage.location.template'='s3://$DATA_BUCKET/telemetry/dt=\${dt}/');"
+DDL="CREATE EXTERNAL TABLE IF NOT EXISTS $GLUE_DB.$GLUE_TABLE (sid string, ev string, kind string, level string, client_t bigint, url string, props string, uid string, role string, ingest_t bigint, ip string, ua string, message string, name string, stack string, route string, method string, route_type string, status int, case_token string, detail string, env string, req_id string) PARTITIONED BY (dt string) STORED AS PARQUET LOCATION 's3://$DATA_BUCKET/$DATA_PREFIX/' TBLPROPERTIES ('parquet.compression'='SNAPPY','projection.enabled'='true','projection.dt.type'='date','projection.dt.range'='2026-01-01,NOW','projection.dt.format'='yyyy-MM-dd','projection.dt.interval'='1','projection.dt.interval.unit'='DAYS','storage.location.template'='s3://$DATA_BUCKET/$DATA_PREFIX/dt=\${dt}/');"
 
 aws athena start-query-execution --region "$AWS_REGION" \
   --work-group "$WORKGROUP" \
@@ -128,7 +172,7 @@ cat > /tmp/fh-policy.json <<EOF
     {
       "Effect":"Allow",
       "Action":["s3:AbortMultipartUpload","s3:GetBucketLocation","s3:GetObject","s3:ListBucket","s3:ListBucketMultipartUploads","s3:PutObject"],
-      "Resource":["arn:aws:s3:::$DATA_BUCKET","arn:aws:s3:::$DATA_BUCKET/*"]
+      "Resource":["arn:aws:s3:::$DATA_BUCKET","arn:aws:s3:::$DATA_BUCKET/$DATA_PREFIX/*"]
     },
     {
       "Effect":"Allow",
@@ -165,8 +209,8 @@ cat > /tmp/fh.json <<EOF
 {
   "RoleARN": "$FH_ROLE_ARN",
   "BucketARN": "arn:aws:s3:::$DATA_BUCKET",
-  "Prefix": "telemetry/dt=!{timestamp:yyyy-MM-dd}/",
-  "ErrorOutputPrefix": "errors/!{firehose:error-output-type}/dt=!{timestamp:yyyy-MM-dd}/",
+  "Prefix": "$DATA_PREFIX/dt=!{timestamp:yyyy-MM-dd}/",
+  "ErrorOutputPrefix": "$DATA_PREFIX/_errors/!{firehose:error-output-type}/dt=!{timestamp:yyyy-MM-dd}/",
   "BufferingHints": { "SizeInMBs": 128, "IntervalInSeconds": 300 },
   "CompressionFormat": "UNCOMPRESSED",
   "DataFormatConversionConfiguration": {
@@ -194,6 +238,10 @@ aws firehose create-delivery-stream --region "$AWS_REGION" \
 > Buffering = 128 MB / 300s. Telemetry is low-volume, so most flushes will hit the **5-minute**
 > timer, giving one Parquet file every ~5 min. Raise the interval (max 900s) to get fewer, larger
 > files if you prefer.
+>
+> Delivery-**failure** records land under `$DATA_PREFIX/_errors/` (same namespace, one IAM grant).
+> They're invisible to Athena: partition projection only reads `…/$DATA_PREFIX/dt=<date>/` paths,
+> so the `_errors/` subfolder is never scanned.
 
 ---
 
@@ -226,11 +274,11 @@ cat > /tmp/app-telemetry.json <<EOF
 
     { "Sid":"ReadData","Effect":"Allow",
       "Action":["s3:GetObject","s3:ListBucket","s3:GetBucketLocation"],
-      "Resource":["arn:aws:s3:::$DATA_BUCKET","arn:aws:s3:::$DATA_BUCKET/*"] },
+      "Resource":["arn:aws:s3:::$DATA_BUCKET","arn:aws:s3:::$DATA_BUCKET/$DATA_PREFIX/*"] },
 
     { "Sid":"AthenaResults","Effect":"Allow",
       "Action":["s3:GetObject","s3:PutObject","s3:ListBucket","s3:GetBucketLocation"],
-      "Resource":["arn:aws:s3:::$RESULTS_BUCKET","arn:aws:s3:::$RESULTS_BUCKET/*"] }
+      "Resource":["arn:aws:s3:::$RESULTS_BUCKET","arn:aws:s3:::$RESULTS_BUCKET/$ATHENA_PREFIX/*"] }
   ]
 }
 EOF
@@ -251,7 +299,7 @@ AWS_REGION=us-east-1
 ATHENA_DATABASE=jdlab
 ATHENA_TABLE=telemetry
 ATHENA_WORKGROUP=jdlab
-ATHENA_OUTPUT=s3://jdlab-athena-results/athena/
+ATHENA_OUTPUT=s3://jdlab-docs-bucket-hpncyz/athena/
 ```
 
 With `TELEMETRY_FIREHOSE_STREAM` set, `lib/telemetry-sink.ts` ships to Firehose instead of the
@@ -259,28 +307,40 @@ local NDJSON dev file — no code change needed on the write path.
 
 ---
 
-## 7. One required code change — `props` as a JSON string
+## 7. `props` as a JSON string — already handled at the delivery boundary
 
 Firehose Parquet conversion needs each field to match the Glue schema. `props` is a nested,
-variable object, so the record must carry it as a **string** (Glue column `props string`). In the
-ingest route enrichment (`app/api/portal/telemetry/route.ts`), change:
+variable object, so it's declared as a single **`props string`** column (see §2) and must be
+shipped as a JSON string. This is done at the **delivery boundary**, not in the ingest route, so
+that `npm run dev` and production share one codebase:
+
+- **Dev** (`TELEMETRY_FIREHOSE_STREAM` unset) — `lib/telemetry-sink.ts` writes the local NDJSON
+  with `props` as an **object**, and the read side reads it back as an object. Nothing changes.
+- **Prod** (`TELEMETRY_FIREHOSE_STREAM` set) — `lib/telemetry-sink.ts` runs each record through
+  `serializeForDelivery()`, which `JSON.stringify`s `props` (and maps an absent `props` to
+  explicit `null`) *only* on the Firehose path → clean `props string` Parquet column.
 
 ```ts
-props: e.props && typeof e.props === 'object' ? e.props : undefined,
+// lib/telemetry-sink.ts — applied only on the Firehose PutRecordBatch path:
+Records: chunk.map(r => ({ Data: Buffer.from(JSON.stringify(serializeForDelivery(r)) + '\n') })),
 ```
 
-to:
-
-```ts
-props: e.props && typeof e.props === 'object' ? JSON.stringify(e.props) : null,
-```
-
-Query it in Athena with `json_extract` / `json_extract_scalar`, e.g.
+The read side (`lib/telemetry-query.ts`) is source-agnostic: `normalizeRecord()` parses a string
+`props` back to an object, so records round-trip identically whether they came from dev NDJSON or
+Athena/Parquet. Query the JSON in Athena with `json_extract` / `json_extract_scalar`, e.g.
 `json_extract_scalar(props, '$.caseId')`.
 
-(The read side, `lib/telemetry-query.ts`, still needs its Athena implementation — swap the local
-NDJSON reader for `@aws-sdk/client-athena` StartQueryExecution → poll → GetQueryResults, filtered
-on the `dt` partition. That's an app-code task, not AWS setup.)
+> **No ingest-route edit is needed** — the ingest enrichment in
+> `app/api/portal/telemetry/route.ts` keeps `props` as an object. (An earlier version of this
+> runbook told you to `JSON.stringify` it there; that breaks the dev admin viewer, which reads
+> `props` as an object. The boundary approach above supersedes it.)
+
+(The read side is **implemented** and gated the same way: `lib/telemetry-query.ts` reads the local
+NDJSON in dev, and when `TELEMETRY_FIREHOSE_STREAM` is set it queries **Athena**
+(`@aws-sdk/client-athena` StartQueryExecution → poll → GetQueryResults), bounded to the last
+`TELEMETRY_LOOKBACK_DAYS` (default 7) via the `dt` partition so each scan stays in the KB–MB
+range. `normalizeRecord()` parses the string `props` column back to an object, so the admin viewer
+is source-agnostic. It needs the §6 `ATHENA_*` env vars and the §5 Athena/Glue/S3 IAM grants.)
 
 ---
 
@@ -293,12 +353,24 @@ aws firehose put-record --region "$AWS_REGION" --delivery-stream-name "$STREAM" 
 #   (base64 of: {"sid":"test","ev":"ping","ingest_t":1700000000000}\n )
 
 # b) after the buffer flushes (~5 min), Parquet appears:
-aws s3 ls "s3://$DATA_BUCKET/telemetry/" --recursive
+aws s3 ls "s3://$DATA_BUCKET/$DATA_PREFIX/" --recursive
 
 # c) query it
 aws athena start-query-execution --region "$AWS_REGION" --work-group "$WORKGROUP" \
   --query-string "SELECT ev, count(*) FROM $GLUE_DB.$GLUE_TABLE WHERE dt >= date_format(current_date - interval '7' day, '%Y-%m-%d') GROUP BY ev;"
 # then: aws athena get-query-results --query-execution-id <id-from-above>
+
+# d) recent application errors (server + client), most recent first — diagnostic.
+#    Includes stack/detail/uid/role/sid/req_id; coalesces client_error detail out
+#    of the JSON `props` column (client errors arrive via the telemetry route, so
+#    their message/stack live in props).
+aws athena start-query-execution --region "$AWS_REGION" --work-group "$WORKGROUP" \
+  --query-string "SELECT from_unixtime(ingest_t/1000) AS t, ev, req_id, sid, uid, role, coalesce(route, url) AS location, status, coalesce(name, 'ClientError') AS name, coalesce(message, json_extract_scalar(props, '\$.message')) AS message, detail, case_token, coalesce(stack, json_extract_scalar(props, '\$.stack')) AS stack FROM $GLUE_DB.$GLUE_TABLE WHERE dt >= date_format(current_date - interval '7' day, '%Y-%m-%d') AND kind = 'error' ORDER BY ingest_t DESC LIMIT 50;"
+
+# e) session timeline — everything (errors + interactions) for one session, to see
+#    what the user did right before an error. Use the sid from an error row above.
+aws athena start-query-execution --region "$AWS_REGION" --work-group "$WORKGROUP" \
+  --query-string "SELECT from_unixtime(ingest_t/1000) AS t, kind, ev, coalesce(route, url) AS location, coalesce(message, json_extract_scalar(props, '\$.message')) AS message FROM $GLUE_DB.$GLUE_TABLE WHERE dt >= date_format(current_date - interval '7' day, '%Y-%m-%d') AND sid = '<sid-from-an-error-row>' ORDER BY ingest_t;"
 ```
 
 ---

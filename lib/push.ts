@@ -78,7 +78,6 @@ export async function sendPushToUsers(userIds: number[], payload: PushPayload): 
   if (subs.length === 0) return
   const body = JSON.stringify(payload)
 
-
   await Promise.all(
     subs.map(async s => {
       try {

@@ -10,10 +10,28 @@
 
 @layer components {
   .btn-primary {
-    @apply px-6 py-3 bg-primary text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors;
+    @apply inline-flex items-center justify-center gap-2 px-6 py-3 bg-primary text-white rounded-xl font-semibold
+           shadow-sm transition-all duration-200
+           hover:bg-blue-700 hover:shadow-md motion-safe:hover:-translate-y-0.5
+           active:translate-y-0 active:shadow-sm
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2
+           disabled:opacity-50 disabled:pointer-events-none disabled:shadow-none;
   }
   .btn-secondary {
-    @apply px-6 py-3 bg-secondary text-white rounded-lg font-semibold hover:bg-teal-700 transition-colors;
+    @apply inline-flex items-center justify-center gap-2 px-6 py-3 bg-secondary text-white rounded-xl font-semibold
+           shadow-sm transition-all duration-200
+           hover:bg-teal-700 hover:shadow-md motion-safe:hover:-translate-y-0.5
+           active:translate-y-0 active:shadow-sm
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary/50 focus-visible:ring-offset-2
+           disabled:opacity-50 disabled:pointer-events-none disabled:shadow-none;
+  }
+  .btn-outline {
+    @apply inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold
+           border border-primary text-primary bg-transparent transition-all duration-200
+           hover:bg-primary/5 hover:shadow-sm motion-safe:hover:-translate-y-0.5
+           active:translate-y-0
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2
+           disabled:opacity-50 disabled:pointer-events-none;
   }
   .section-padding {
     @apply py-16 px-4 sm:px-6 lg:px-8;

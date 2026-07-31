@@ -19,6 +19,10 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   output: 'standalone',
   reactStrictMode: true,
+  // Next 16 requires declaring any non-default next/image quality values.
+  images: {
+    qualities: [75, 85],
+  },
   typescript: {
     tsconfigPath: './tsconfig.json',
   },

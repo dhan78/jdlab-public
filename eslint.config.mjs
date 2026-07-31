@@ -1,15 +1,10 @@
-import { dirname } from 'path'
-import { fileURLToPath } from 'url'
-import { FlatCompat } from '@eslint/eslintrc'
-
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
-
-// Bridge the Next.js shareable configs (still written in the legacy "extends"
-// format) into ESLint 9's flat config. `next/core-web-vitals` pulls in the
-// React, React Hooks, jsx-a11y and @next/next rules; `next/typescript` adds the
-// TypeScript-aware rules (fast, non-type-checked — no parserOptions.project).
-const compat = new FlatCompat({ baseDirectory: __dirname })
+// Next.js 16 ships native ESLint flat configs, so we import them directly
+// instead of bridging the legacy "extends" format through FlatCompat (which
+// hits a circular-structure error under eslint-config-next 16).
+//   core-web-vitals -> React, React Hooks, jsx-a11y, @next/next rules
+//   typescript      -> TypeScript-aware rules (fast, non-type-checked)
+import nextCoreWebVitals from 'eslint-config-next/core-web-vitals'
+import nextTypescript from 'eslint-config-next/typescript'
 
 const eslintConfig = [
   {
@@ -24,7 +19,8 @@ const eslintConfig = [
       'outline-export/**',
     ],
   },
-  ...compat.extends('next/core-web-vitals', 'next/typescript'),
+  ...nextCoreWebVitals,
+  ...nextTypescript,
   {
     rules: {
       // Literal apostrophes/quotes in JSX *text* render fine; this rule guards a
@@ -35,6 +31,11 @@ const eslintConfig = [
       // no `pages/` dir). It false-positives here even though internal links all
       // use <Link> and the only <a> tags are tel:/mailto: (which must be anchors).
       '@next/next/no-html-link-for-pages': 'off',
+      // New in the Next 16 react-hooks plugin. It flags setState() inside an
+      // effect as a cascading-render risk, but this repo uses that pattern
+      // deliberately (hydration guards, async data loads, viewer resets) where
+      // it's correct. Advisory/perf, not correctness — off to avoid noise.
+      'react-hooks/set-state-in-effect': 'off',
     },
   },
 ]
