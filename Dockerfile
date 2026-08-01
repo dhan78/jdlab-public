@@ -25,6 +25,11 @@ COPY . .
 # PORTAL_JWT_SECRET is validated at module load during the build.
 ARG PORTAL_JWT_SECRET
 ENV PORTAL_JWT_SECRET=$PORTAL_JWT_SECRET
+# NEXT_PUBLIC_* vars are inlined into the CLIENT bundle at build time, so the
+# VAPID public key MUST be present here (runtime env is too late). Without it,
+# NotificationBell sees no key and the push toggle renders 'unsupported' (hidden).
+ARG NEXT_PUBLIC_VAPID_PUBLIC_KEY
+ENV NEXT_PUBLIC_VAPID_PUBLIC_KEY=$NEXT_PUBLIC_VAPID_PUBLIC_KEY
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 

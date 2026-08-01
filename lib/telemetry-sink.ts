@@ -22,6 +22,28 @@ export function isTelemetryDeliveryEnabled(): boolean {
   return !!STREAM
 }
 
+/**
+ * Normalize a record for the Firehose/Parquet delivery path.
+ *
+ * Firehose's JSON→Parquet conversion is schema-driven: every field must map to a
+ * fixed-type Glue column. `props` is a variable-shaped bag, so it's declared as a
+ * single `props string` column and must be shipped as a JSON string. We also map
+ * an absent `props` to explicit `null` (the deserializer wants null, not missing).
+ *
+ * This runs ONLY on the delivery path — the local dev NDJSON keeps `props` as an
+ * object, and the read side (lib/telemetry-query.ts) parses a string back to an
+ * object, so records round-trip identically in both modes.
+ */
+export function serializeForDelivery(record: unknown): unknown {
+  if (!record || typeof record !== 'object') return record
+  const r = record as Record<string, unknown>
+  if (!('props' in r)) return record
+  const p = r.props
+  if (p && typeof p === 'object') return { ...r, props: JSON.stringify(p) }
+  if (p === undefined) return { ...r, props: null }
+  return record
+}
+
 let _client: FirehoseClient | null = null
 function client(): FirehoseClient {
   if (!_client) _client = new FirehoseClient({ region: REGION })
@@ -55,7 +77,7 @@ export async function shipTelemetry(records: unknown[]): Promise<void> {
       await client().send(
         new PutRecordBatchCommand({
           DeliveryStreamName: STREAM,
-          Records: chunk.map(r => ({ Data: Buffer.from(JSON.stringify(r) + '\n') })),
+          Records: chunk.map(r => ({ Data: Buffer.from(JSON.stringify(serializeForDelivery(r)) + '\n') })),
         })
       )
     }

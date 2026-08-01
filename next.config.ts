@@ -19,6 +19,15 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   output: 'standalone',
   reactStrictMode: true,
+  // Emit browser source maps in production so minified client stack traces
+  // (captured by client_error telemetry) can be mapped back to real source
+  // (components/CaseThread.tsx:534 instead of chunks/4f3c.js:2:88123). The .map
+  // files are served publicly — acceptable here since exposing source is fine.
+  productionBrowserSourceMaps: true,
+  // Next 16 requires declaring any non-default next/image quality values.
+  images: {
+    qualities: [75, 85],
+  },
   typescript: {
     tsconfigPath: './tsconfig.json',
   },

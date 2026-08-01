@@ -1,6 +1,6 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import Logo from './Logo'
 import NotificationBell from './NotificationBell'
 
@@ -10,73 +10,82 @@ interface PortalHeaderProps {
   role: 'doctor' | 'planner' | 'admin'
 }
 
+function initials(name: string): string {
+  const p = name.trim().split(/\s+/).filter(Boolean)
+  if (p.length === 0) return '?'
+  if (p.length === 1) return p[0].slice(0, 2).toUpperCase()
+  return (p[0][0] + p[p.length - 1][0]).toUpperCase()
+}
+
+function IconUser({ className = 'w-4 h-4' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+      <circle cx="10" cy="6.5" r="3" />
+      <path d="M4 16c0-3 2.7-4.5 6-4.5s6 1.5 6 4.5" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 export default function PortalHeader({ name, email, role }: PortalHeaderProps) {
-  const router = useRouter()
-
-  const handleLogout = async () => {
-    await fetch('/api/portal/logout', { method: 'POST' })
-    router.push('/portal/login')
-  }
-
-  const casesLabel =
-    role === 'doctor' ? 'My Cases' : role === 'planner' ? 'Work Queue' : 'Cases'
+  const roleLabel = role === 'doctor' ? 'Doctor' : role === 'planner' ? 'Planning' : 'Admin'
 
   return (
-    <header className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-50" role="banner">
+    <header
+      className="sticky top-0 z-50 border-b border-gray-200 bg-white/90 backdrop-blur-md"
+      role="banner"
+    >
       <nav
-        className="container-wide flex items-center justify-between py-3"
+        className="container-wide flex h-16 items-center justify-between"
         aria-label="Portal navigation"
       >
-        <a href="/portal" className="flex items-center gap-2" aria-label="JD Lab Portal home">
+        {/* Brand → home (also the "My Cases" destination — no separate link needed) */}
+        <Link
+          href="/portal"
+          className="flex items-center gap-2 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          aria-label="JD Lab Portal — home"
+        >
           <Logo />
-          <span className="text-sm font-semibold text-primary ml-1">Portal</span>
-        </a>
+          <span className="text-sm font-semibold tracking-tight text-primary">Portal</span>
+        </Link>
 
-        <div className="flex items-center gap-4">
-          <a
-            href="/portal"
-            className="text-sm font-medium text-primary hover:text-primary/80 transition-colors"
-            aria-label={casesLabel}
-          >
-            {casesLabel}
-          </a>
-
+        <div className="flex items-center gap-1 sm:gap-1.5">
           {role === 'admin' && (
-            <a
+            <Link
               href="/portal/admin"
-              className="text-sm font-medium text-primary hover:text-primary/80 transition-colors"
+              className="hidden rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-primary sm:inline-flex"
               aria-label="Admin dashboard"
             >
               Admin
-            </a>
+            </Link>
           )}
 
-          {role === 'doctor' && (
-            <a
-              href="/portal/profile"
-              className="text-sm font-medium text-primary hover:text-primary/80 transition-colors"
-              aria-label="My profile"
-            >
-              Profile
-            </a>
-          )}
-
-          <div className="hidden sm:flex flex-col items-end leading-tight">
-            <span className="text-sm font-semibold text-gray-800" aria-label={`Logged in as ${name}`}>
-              {name}
-            </span>
-            <span className="text-xs text-gray-500">{email}</span>
-          </div>
+          <Link
+            href="/portal/profile"
+            className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-primary"
+            aria-label="My profile"
+          >
+            <IconUser className="h-4 w-4" />
+            <span className="hidden sm:inline">Profile</span>
+          </Link>
 
           <NotificationBell />
 
-          <button
-            onClick={handleLogout}
-            className="btn-secondary text-sm px-4 py-2"
-            aria-label="Log out of portal"
+          {/* Identity + sign out */}
+          <div
+            className="ml-1 flex items-center gap-2.5 border-l border-gray-200 pl-2 sm:pl-3"
+            title={email}
           >
-            Log out
-          </button>
+            <div
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary"
+              aria-hidden="true"
+            >
+              {initials(name)}
+            </div>
+            <div className="hidden leading-tight sm:flex sm:flex-col">
+              <span className="text-sm font-semibold text-gray-800">{name}</span>
+              <span className="text-xs text-gray-500">{roleLabel}</span>
+            </div>
+          </div>
         </div>
       </nav>
     </header>

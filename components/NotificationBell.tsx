@@ -44,6 +44,7 @@ export default function NotificationBell() {
   const [unread, setUnread] = useState(0)
   const [open, setOpen] = useState(false)
   const [pushState, setPushState] = useState<'unsupported' | 'off' | 'on' | 'busy'>('off')
+  const [pushMsg, setPushMsg] = useState('')
   const refetchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const load = useCallback(async () => {
@@ -92,27 +93,51 @@ export default function NotificationBell() {
 
   const enablePush = useCallback(async () => {
     if (!VAPID_PUBLIC_KEY) return
+    // Already blocked at the browser level — requestPermission() resolves
+    // 'denied' instantly, so tell the user how to fix it instead of silently
+    // snapping the toggle back to grey.
+    if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+      setPushMsg('Notifications are blocked for this site — allow them in the browser site settings (the icon left of the URL), then try again.')
+      return
+    }
+    setPushMsg('')
     setPushState('busy')
+    // Guard against environments where the permission prompt / subscription
+    // never resolves (e.g. embedded browsers) so we never hang in 'busy'.
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('timeout')), 15000)
+    )
     try {
-      const perm = await Notification.requestPermission()
-      if (perm !== 'granted') {
-        setPushState('off')
-        return
-      }
-      const reg = await navigator.serviceWorker.register('/sw.js')
-      await navigator.serviceWorker.ready
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-      })
-      const res = await fetch('/api/portal/push/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(sub),
-      })
-      setPushState(res.ok ? 'on' : 'off')
-    } catch {
+      await Promise.race([
+        (async () => {
+          const perm = await Notification.requestPermission()
+          if (perm !== 'granted') throw new Error('denied')
+          const reg = await navigator.serviceWorker.register('/sw.js')
+          await navigator.serviceWorker.ready
+          const sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+          })
+          const res = await fetch('/api/portal/push/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sub),
+          })
+          if (!res.ok) throw new Error('save')
+        })(),
+        timeout,
+      ])
+      setPushState('on')
+    } catch (e) {
       setPushState('off')
+      const m = (e as Error).message
+      setPushMsg(
+        m === 'denied'
+          ? 'Permission denied — allow notifications for this site to enable push.'
+          : m === 'timeout'
+            ? 'Could not enable here — use a normal Chrome/Edge window (not an embedded browser).'
+            : 'Could not enable push on this device.'
+      )
     }
   }, [])
 
@@ -209,6 +234,36 @@ export default function NotificationBell() {
               </div>
             </div>
 
+            {pushState !== 'unsupported' && (
+              <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <svg className="w-4 h-4 text-slate-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+                      <path d="M10 3a4 4 0 0 0-4 4c0 3-1.5 4.5-2 5h12c-.5-.5-2-2-2-5a4 4 0 0 0-4-4Z" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M8.5 16a1.5 1.5 0 0 0 3 0" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <span className="text-sm text-slate-700">
+                      {pushState === 'busy' ? 'Enabling…' : 'Push notifications on this device'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={pushState === 'on'}
+                    aria-label="Toggle push notifications on this device"
+                    onClick={pushState === 'on' ? disablePush : enablePush}
+                    disabled={pushState === 'busy'}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 ${pushState === 'on' ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${pushState === 'on' ? 'translate-x-[18px]' : 'translate-x-0.5'}`}
+                    />
+                  </button>
+                </div>
+                {pushMsg && <p className="mt-1.5 text-xs text-amber-600">{pushMsg}</p>}
+              </div>
+            )}
+
             <div className="max-h-80 overflow-y-auto">
               {items.length === 0 ? (
                 <p className="px-4 py-8 text-center text-sm text-slate-400">You&apos;re all caught up.</p>
@@ -232,25 +287,6 @@ export default function NotificationBell() {
                 ))
               )}
             </div>
-
-            {pushState !== 'unsupported' && (
-              <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50">
-                {pushState === 'on' ? (
-                  <button type="button" onClick={disablePush} className="text-xs text-slate-500 hover:text-slate-700">
-                    🔔 Push notifications on — turn off
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={enablePush}
-                    disabled={pushState === 'busy'}
-                    className="text-xs text-primary hover:underline disabled:opacity-50"
-                  >
-                    {pushState === 'busy' ? 'Enabling…' : 'Enable push notifications on this device'}
-                  </button>
-                )}
-              </div>
-            )}
           </div>
         </>
       )}

@@ -45,12 +45,12 @@ export function StatusIcon({
           <path d="M17.25 11v2M15 15h4.5" />
         </svg>
       )
-    case 'review': // person + bold check — doctor review/approval
+    case 'review': // person + bold check above the shoulder — doctor review/approval
       return (
         <svg {...common}>
           <circle cx="8" cy="6" r="2.6" />
-          <path d="M2.8 18a5.2 5.2 0 0 1 10.2-1.4" />
-          <path d="M13 14.5 15.8 17.5 21 11" strokeWidth={2.6} />
+          <path d="M2.8 18a5 5 0 0 1 9.4-1.3" />
+          <path d="M15 11 17.3 13.6 21.8 7.5" strokeWidth={2.4} />
         </svg>
       )
     case 'production': // printer — printing/milling the appliance

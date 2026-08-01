@@ -1,6 +1,6 @@
 import { db } from './db'
 import { cases, caseMessages, messageAttachments, caseStatusHistory, users, caseReads, auditLog } from './db/schema'
-import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, isNotNull, or, sql } from 'drizzle-orm'
 import { encodeCaseId, decodeCaseId } from './case-code'
 import { isS3Enabled, putAttachment, getAttachmentUrl, parseDataUrl } from './storage'
 import type { CaseStatus, CaseType } from './case-meta'
@@ -406,6 +406,71 @@ export async function getLastViewedMap(userId: string): Promise<Record<string, s
     out[encodeCaseId(r.caseId)] = new Date(r.viewedAt).toISOString()
   }
   return out
+}
+
+// --- Pins (manual "keep this case in the recently-viewed rail") ---
+
+// Pin or unpin a case for a user (upsert). Pinning a case the user has no read
+// row for inserts one with last_read_at at the epoch, so pinning never marks the
+// case read (its unread state is preserved).
+export async function setPinned(userId: string, caseId: string, pinned: boolean): Promise<void> {
+  const uid = toIntId(userId)
+  const cid = decodeCaseId(caseId)
+  if (uid < 0 || cid < 0) return
+  if (pinned) {
+    await db
+      .insert(caseReads)
+      .values({ userId: uid, caseId: cid, pinnedAt: new Date(), lastReadAt: new Date(0) })
+      .onConflictDoUpdate({
+        target: [caseReads.userId, caseReads.caseId],
+        set: { pinnedAt: new Date() },
+      })
+  } else {
+    await db
+      .update(caseReads)
+      .set({ pinnedAt: null })
+      .where(and(eq(caseReads.userId, uid), eq(caseReads.caseId, cid)))
+  }
+}
+
+// Encoded case ids the user has pinned.
+export async function getPinnedSet(userId: string): Promise<Set<string>> {
+  const uid = toIntId(userId)
+  if (uid < 0) return new Set()
+  const rows = await db
+    .select({ caseId: caseReads.caseId })
+    .from(caseReads)
+    .where(and(eq(caseReads.userId, uid), isNotNull(caseReads.pinnedAt)))
+  return new Set(rows.map(r => encodeCaseId(r.caseId)))
+}
+
+// Encoded case id -> pinned-at ISO time. Lets the UI order pinned cases by a
+// STABLE pin time (spatial memory) rather than by view recency.
+export async function getPinnedMap(userId: string): Promise<Record<string, string>> {
+  const uid = toIntId(userId)
+  if (uid < 0) return {}
+  const rows = await db
+    .select({ caseId: caseReads.caseId, pinnedAt: caseReads.pinnedAt })
+    .from(caseReads)
+    .where(and(eq(caseReads.userId, uid), isNotNull(caseReads.pinnedAt)))
+  const out: Record<string, string> = {}
+  for (const r of rows) {
+    if (r.pinnedAt) out[encodeCaseId(r.caseId)] = new Date(r.pinnedAt).toISOString()
+  }
+  return out
+}
+
+// Whether a single case is pinned by a user (targeted lookup for case detail).
+export async function isCasePinned(userId: string, caseId: string): Promise<boolean> {
+  const uid = toIntId(userId)
+  const cid = decodeCaseId(caseId)
+  if (uid < 0 || cid < 0) return false
+  const [row] = await db
+    .select({ pinnedAt: caseReads.pinnedAt })
+    .from(caseReads)
+    .where(and(eq(caseReads.userId, uid), eq(caseReads.caseId, cid)))
+    .limit(1)
+  return !!row?.pinnedAt
 }
 
 export async function addMessage(input: {
