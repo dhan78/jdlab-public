@@ -28,6 +28,7 @@ const ENDPOINT = '/api/portal/telemetry'
 const MAX_BATCH = 15
 const FLUSH_MS = 4000
 const SID_KEY = 'jdlab.telemetry.sid'
+const STARTED_KEY = 'jdlab.telemetry.started'
 
 let queue: TEvent[] = []
 let timer: ReturnType<typeof setTimeout> | null = null
@@ -102,13 +103,30 @@ export function track(ev: string, props?: Props): void {
 export function startTelemetry(): void {
   if (started || typeof window === 'undefined') return
   started = true
-  track('session_start', {
-    ua: navigator.userAgent,
-    ref: document.referrer || undefined,
-    w: window.innerWidth,
-    h: window.innerHeight,
-    lang: navigator.language,
-  })
+
+  // Emit session_start ONCE per browser session (sessionStorage lifetime), not
+  // once per page LOAD. A full-page navigation (e.g. an `<a href>` route link, or
+  // a mobile reload) re-executes this module with the module-level `started`
+  // reset to false, which would otherwise emit a fresh session_start on every
+  // hard navigation. The sid is stable across those reloads (sessionStorage), so
+  // guard the marker with a matching per-session flag.
+  let firstInSession = true
+  try {
+    if (window.sessionStorage.getItem(STARTED_KEY) === '1') firstInSession = false
+    else window.sessionStorage.setItem(STARTED_KEY, '1')
+  } catch {
+    /* sessionStorage blocked — treat each load as a new session */
+  }
+
+  if (firstInSession) {
+    track('session_start', {
+      ua: navigator.userAgent,
+      ref: document.referrer || undefined,
+      w: window.innerWidth,
+      h: window.innerHeight,
+      lang: navigator.language,
+    })
+  }
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flushTelemetry(true)
   })

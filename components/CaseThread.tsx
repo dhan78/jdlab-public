@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import Link from 'next/link'
 import { StatusIcon } from './StatusIcon'
 import {
   STATUS_META,
@@ -69,6 +70,7 @@ interface CaseDetail {
   scanReceivedAt?: string
   createdAt: string
   updatedAt: string
+  pinned?: boolean
 }
 
 const STATUSES: CaseStatus[] = STAGES_BY_TYPE.guide
@@ -115,6 +117,30 @@ function IconUser({ className = 'w-4 h-4' }: { className?: string }) {
 }
 function IconCalendar({ className = 'w-4 h-4' }: { className?: string }) {
   return (<svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12" rx="2" /><path d="M3 8h14M7 3v3M13 3v3" strokeLinecap="round" /></svg>)
+}
+
+// Pushpin icon: filled when pinned, outline when not. Matches the sidebar rail.
+function IconPin({ filled, className = 'w-4 h-4' }: { filled?: boolean; className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 17v5" />
+      <path d="M9 10.8V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v5.8a2 2 0 0 0 1.1 1.8l1.4.7a1 1 0 0 1 .5.9V16a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-.1a1 1 0 0 1 .5-.9l1.4-.7A2 2 0 0 0 9 10.8Z" />
+    </svg>
+  )
+}
+
+// Emit a replayable client-side error into the telemetry pipeline. It rides the
+// same `client_error` event the global handler uses, so it's flagged kind:'error'
+// server-side and shows as a red row in the admin Session Timeline, right after
+// the actions that led to it. PHI-safe: never include patient text or raw file
+// names — only file extension, size, HTTP status, and app error messages.
+function reportClientError(where: string, caseToken: string, message: string, extra?: Record<string, unknown>) {
+  track('client_error', {
+    where,
+    caseToken,
+    message: String(message ?? 'error').slice(0, 500),
+    ...extra,
+  })
 }
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024        // inline base64 (no-S3 fallback)
@@ -362,6 +388,7 @@ export default function CaseThread({
   const [sendError, setSendError] = useState('')
   const [statusSaving, setStatusSaving] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [dragActive, setDragActive] = useState(false)
   const [lightbox, setLightbox] = useState<{ items: Attachment[]; index: number } | null>(null)
 
   // Realtime "typing" indicator for the other participant.
@@ -414,6 +441,9 @@ export default function CaseThread({
       // longer marks the case read, so this refresh had to be decoupled from it.)
       window.dispatchEvent(new Event('cases:changed'))
     } catch (e) {
+      reportClientError('case_load', caseId, e instanceof Error ? e.message : 'load failed', {
+        stack: e instanceof Error ? e.stack?.slice(0, 2000) : undefined,
+      })
       setError(e instanceof Error ? e.message : 'Could not load this case.')
     } finally {
       setLoading(false)
@@ -492,7 +522,11 @@ export default function CaseThread({
     setSendError('')
     const next: PendingAttachment[] = []
     for (const file of Array.from(files)) {
+      const ext = file.name.split('.').pop()?.toLowerCase()
       if (file.size > MAX_UPLOAD_BYTES) {
+        reportClientError('attach_too_large', caseId, 'file exceeds upload limit', {
+          ext, size: file.size, limit: MAX_UPLOAD_BYTES, validation: true,
+        })
         setSendError(`"${file.name}" exceeds the ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB limit.`)
         continue
       }
@@ -500,12 +534,20 @@ export default function CaseThread({
       // upload straight to S3 at send time, so we keep just the File here.
       let dataUrl: string | undefined
       if (file.size <= MAX_ATTACHMENT_BYTES) {
-        dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(reader.result as string)
-          reader.onerror = () => reject(reader.error)
-          reader.readAsDataURL(file)
-        })
+        try {
+          dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(reader.result as string)
+            reader.onerror = () => reject(reader.error)
+            reader.readAsDataURL(file)
+          })
+        } catch (err) {
+          reportClientError('attach_read', caseId, err instanceof Error ? err.message : 'file read failed', {
+            ext, size: file.size,
+          })
+          setSendError(`Could not read "${file.name}". Please try again.`)
+          continue
+        }
       }
       next.push({ file, name: file.name, mimeType: file.type, size: file.size, dataUrl })
     }
@@ -515,6 +557,25 @@ export default function CaseThread({
 
   const removePending = (index: number) => {
     setPending(prev => prev.filter((_, i) => i !== index))
+  }
+
+  // Drag-and-drop + paste attach: both reuse handleFiles (size caps + S3/base64
+  // path). Text paste is left alone — we only act when files are present.
+  const onDragOverFiles = (e: React.DragEvent) => {
+    e.preventDefault()
+    if (!dragActive) setDragActive(true)
+  }
+  const onDragLeaveFiles = (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragActive(false)
+  }
+  const onDropFiles = (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragActive(false)
+    if (e.dataTransfer?.files?.length) void handleFiles(e.dataTransfer.files)
+  }
+  const onPasteFiles = (e: React.ClipboardEvent) => {
+    if (e.clipboardData?.files?.length) void handleFiles(e.clipboardData.files)
   }
 
   // Resolve one pending file into a message attachment: upload directly to S3
@@ -537,6 +598,9 @@ export default function CaseThread({
         body: p.file,
       })
       if (!put.ok) {
+        reportClientError('attach_upload', caseId, 'S3 PUT failed', {
+          status: put.status, ext: p.name.split('.').pop()?.toLowerCase(), size: p.size,
+        })
         setSendError(`Upload of "${p.name}" failed. Please try again.`)
         return null
       }
@@ -545,10 +609,16 @@ export default function CaseThread({
     if (pres.status === 501) {
       // Direct upload not configured (dev): base64 fallback for small files only.
       if (p.dataUrl) return { ...meta, dataUrl: p.dataUrl }
+      reportClientError('attach_unsupported', caseId, 'no direct upload; too large for base64 fallback', {
+        ext: p.name.split('.').pop()?.toLowerCase(), size: p.size, validation: true,
+      })
       setSendError(`"${p.name}" is too large to attach in this environment.`)
       return null
     }
     const err = await pres.json().catch(() => ({}))
+    reportClientError('attach_presign', caseId, err.error ?? 'presign failed', {
+      status: pres.status, ext: p.name.split('.').pop()?.toLowerCase(), size: p.size,
+    })
     setSendError(err.error ?? `Could not prepare upload for "${p.name}".`)
     return null
   }
@@ -577,9 +647,16 @@ export default function CaseThread({
         setBody('')
         setPending([])
       } else {
+        reportClientError('message_send', caseId, data.error ?? 'send failed', {
+          status: res.status, attachments: pending.length,
+        })
         setSendError(data.error ?? 'Failed to send message.')
       }
-    } catch {
+    } catch (e) {
+      reportClientError('message_send', caseId, e instanceof Error ? e.message : 'send failed', {
+        stack: e instanceof Error ? e.stack?.slice(0, 2000) : undefined,
+        attachments: pending.length,
+      })
       setSendError('An unexpected error occurred.')
     } finally {
       setSending(false)
@@ -603,12 +680,33 @@ export default function CaseThread({
         track('design_approved', { caseId })
         setMessages(data.messages ?? [])
       } else {
+        reportClientError('design_approve', caseId, data.error ?? 'approve failed', { status: res.status })
         setSendError(data.error ?? 'Could not send approval.')
       }
-    } catch {
+    } catch (e) {
+      reportClientError('design_approve', caseId, e instanceof Error ? e.message : 'approve failed', {
+        stack: e instanceof Error ? e.stack?.slice(0, 2000) : undefined,
+      })
       setSendError('An unexpected error occurred.')
     } finally {
       setApproving(false)
+    }
+  }
+
+  // Pin/unpin this case for the current user. Optimistic; reverts on failure and
+  // records the failure into the telemetry pipeline like the other actions.
+  const togglePin = async () => {
+    if (!caseDetail) return
+    const next = !caseDetail.pinned
+    setCaseDetail(prev => (prev ? { ...prev, pinned: next } : prev))
+    try {
+      const res = await fetch(`/api/portal/cases/${caseId}/pin`, { method: next ? 'POST' : 'DELETE' })
+      if (!res.ok) throw new Error(`pin ${res.status}`)
+      track('case_pin', { caseId, pinned: next })
+      window.dispatchEvent(new Event('cases:changed'))
+    } catch (e) {
+      setCaseDetail(prev => (prev ? { ...prev, pinned: !next } : prev))
+      reportClientError('case_pin', caseId, e instanceof Error ? e.message : 'pin failed', { next })
     }
   }
 
@@ -626,7 +724,15 @@ export default function CaseThread({
         setCaseDetail(data.case)
         // Refresh the persistent sidebar so its status dot updates.
         window.dispatchEvent(new Event('cases:changed'))
+      } else {
+        reportClientError('status_change', caseId, data.error ?? 'status change failed', {
+          status: res.status, next: status,
+        })
       }
+    } catch (e) {
+      reportClientError('status_change', caseId, e instanceof Error ? e.message : 'status change failed', {
+        stack: e instanceof Error ? e.stack?.slice(0, 2000) : undefined, next: status,
+      })
     } finally {
       setStatusSaving(false)
     }
@@ -647,7 +753,16 @@ export default function CaseThread({
           prev ? { ...prev, scanReceivedAt: received ? new Date().toISOString() : undefined } : prev
         )
         window.dispatchEvent(new Event('cases:changed'))
+      } else {
+        const data = await res.json().catch(() => ({}))
+        reportClientError('scan_received', caseId, data.error ?? 'scan-received update failed', {
+          status: res.status, received,
+        })
       }
+    } catch (e) {
+      reportClientError('scan_received', caseId, e instanceof Error ? e.message : 'scan-received update failed', {
+        stack: e instanceof Error ? e.stack?.slice(0, 2000) : undefined, received,
+      })
     } finally {
       setStatusSaving(false)
     }
@@ -662,7 +777,7 @@ export default function CaseThread({
   if (error || !caseDetail) {
     return (
       <div>
-        <a href="/portal" className="text-primary text-sm hover:underline">&larr; Back to cases</a>
+        <Link href="/portal" className="text-primary text-sm hover:underline">&larr; Back to cases</Link>
         <div role="alert" className="mt-4 p-4 rounded-lg bg-red-50 border border-red-300 text-red-700">
           {error || 'Case not found.'}
         </div>
@@ -672,10 +787,10 @@ export default function CaseThread({
 
   return (
     <div className="max-w-3xl">
-        <a href="/portal" className="lg:hidden inline-flex items-center gap-1.5 text-slate-500 text-sm hover:text-primary transition-colors">
+        <Link href="/portal" className="lg:hidden inline-flex items-center gap-1.5 text-slate-500 text-sm hover:text-primary transition-colors">
           <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M12 5l-5 5 5 5" strokeLinecap="round" strokeLinejoin="round" /></svg>
           Back to cases
-        </a>
+        </Link>
 
         {/* Case header */}
         <div className="mt-4 mb-6 bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
@@ -737,6 +852,20 @@ export default function CaseThread({
               )}
             </div>
             <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={togglePin}
+                title={caseDetail.pinned ? 'Unpin this case' : 'Pin this case to keep it in your recently-viewed list'}
+                aria-pressed={!!caseDetail.pinned}
+                className={`inline-flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg border transition ${
+                  caseDetail.pinned
+                    ? 'border-primary bg-primary text-white hover:bg-primary/90'
+                    : 'border-slate-300 text-slate-600 hover:bg-slate-50 hover:text-primary'
+                }`}
+              >
+                <IconPin filled={caseDetail.pinned} className="w-4 h-4" />
+                {caseDetail.pinned ? 'Pinned' : 'Pin'}
+              </button>
               {(() => {
                 const read = unreadCount === 0
                 return (
@@ -907,7 +1036,16 @@ export default function CaseThread({
         </div>
 
         {/* Composer */}
-        <form onSubmit={handleSend} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+        <form
+          onSubmit={handleSend}
+          onDragOver={onDragOverFiles}
+          onDragLeave={onDragLeaveFiles}
+          onDrop={onDropFiles}
+          onPaste={onPasteFiles}
+          className={`bg-white rounded-2xl border shadow-sm p-4 transition-colors ${
+            dragActive ? 'border-primary ring-2 ring-primary/40 bg-primary/5' : 'border-slate-200'
+          }`}
+        >
           <div
             role="alert"
             aria-live="polite"
@@ -921,7 +1059,7 @@ export default function CaseThread({
             onFocus={() => track('composer_focus', { caseId })}
             rows={3}
             maxLength={5000}
-            placeholder="Write a message… (attach photos, screenshots, or scan files)"
+            placeholder="Write a message… (attach, drag & drop, or paste photos, screenshots, scan files)"
             className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary resize-y text-slate-800"
           />
 

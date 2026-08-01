@@ -140,6 +140,9 @@ export const caseReads = pgTable(
     // Manual "flag for follow-up": marks the case unread regardless of message
     // authorship, so a doctor can re-surface their own case with no lab reply yet.
     flagged: boolean('flagged').notNull().default(false),
+    // Manual "pin": keeps the case in the recently-viewed rail until unpinned,
+    // independent of view recency. NULL = not pinned; timestamp = pinned-at.
+    pinnedAt: timestamp('pinned_at', { withTimezone: true }),
   },
   t => ({
     pk: primaryKey({ columns: [t.userId, t.caseId] }),

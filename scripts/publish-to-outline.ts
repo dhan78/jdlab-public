@@ -41,7 +41,7 @@ const MAX_BYTES = 256 * 1024 // skip files larger than this
 
 // Default roots walked when nothing is passed on the CLI.
 const DEFAULT_TARGETS = [
-  'app', 'components', 'lib', 'scripts', 'tests', 'specs',
+  'app', 'components', 'lib', 'drizzle', 'scripts', 'tests', 'specs',
   'deploy', 'test-fixtures',
   'middleware.ts', 'next.config.ts', 'tailwind.config.ts', 'postcss.config.js',
   'drizzle.config.ts', 'tsconfig.json', 'package.json', 'eslint.config.mjs',

@@ -872,7 +872,7 @@ export default function CaseList() {
                       <input id="case-shipto" type="text" value={shipToAddress} onChange={e => setShipToAddress(e.target.value)} maxLength={400} placeholder="Where should we ship this case?" className={inputField} />
                     )}
                     <p className="text-xs text-slate-400 mt-1">
-                      Manage your saved addresses in <a href="/portal/profile" className="text-primary hover:underline">your profile</a>.
+                      Manage your saved addresses in <Link href="/portal/profile" className="text-primary hover:underline">your profile</Link>.
                     </p>
                   </div>
                   <div className="md:col-span-2">

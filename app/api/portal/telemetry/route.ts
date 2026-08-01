@@ -54,8 +54,21 @@ export async function POST(request: NextRequest) {
   const enriched = raw.slice(0, MAX_EVENTS).map(e => ({
     sid: typeof e.sid === 'string' ? e.sid.slice(0, 64) : null,
     ev: typeof e.ev === 'string' ? e.ev.slice(0, 64) : 'unknown',
-    // Flag client errors so they sit alongside server errors (WHERE kind='error').
-    ...(e.ev === 'client_error' ? { kind: 'error', level: 'error' } : {}),
+    // Flag client errors so they sit alongside server errors (WHERE kind='error'),
+    // and lift the case token (set by CaseThread's reportClientError) into the
+    // top-level case_token column so the diagnostic error query groups by case.
+    ...(e.ev === 'client_error'
+      ? {
+          kind: 'error',
+          level: 'error',
+          case_token:
+            e.props &&
+            typeof e.props === 'object' &&
+            typeof (e.props as Record<string, unknown>).caseToken === 'string'
+              ? ((e.props as Record<string, unknown>).caseToken as string).slice(0, 32)
+              : null,
+        }
+      : {}),
     req_id: reqId,
     client_t: typeof e.t === 'number' ? e.t : null,
     url: typeof e.url === 'string' ? e.url.slice(0, 512) : null,

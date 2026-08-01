@@ -84,7 +84,8 @@ function describe(e: EventRow): { icon: string; label: string; detail?: string }
     case 'app_error': {
       const raw = e.message ?? (typeof p.message === 'string' ? p.message : '')
       const msg = raw || 'Error'
-      return { icon: '⛔', label: `Error: ${msg}`, detail: e.name ?? (e.ev === 'client_error' ? 'browser' : undefined) }
+      const where = typeof p.where === 'string' ? p.where : undefined
+      return { icon: '⛔', label: `Error: ${msg}`, detail: where ?? e.name ?? (e.ev === 'client_error' ? 'browser' : undefined) }
     }
     default: return { icon: '•', label: e.ev, detail: Object.keys(p).length ? JSON.stringify(p) : undefined }
   }

@@ -255,6 +255,66 @@ async function main() {
     assert(res.status === 413, `expected 413, got ${res.status}`)
   })
 
+  // ---- Pins ----------------------------------------------------------------
+  console.log('\nPins')
+  await check('pin requires auth → 401', async () => {
+    const res = await http(`/api/portal/cases/${doctorCase.id}/pin`, { method: 'POST' })
+    assert(res.status === 401, `expected 401, got ${res.status}`)
+  })
+  await check('pin a case → { pinned: true } and it shows pinned in the list', async () => {
+    const res = await http(`/api/portal/cases/${doctorCase.id}/pin`, { method: 'POST', cookie: plannerCookie })
+    assert(res.status === 200, `status ${res.status}: ${res.text}`)
+    assert(res.json?.pinned === true, `expected pinned:true, got ${JSON.stringify(res.json)}`)
+    const list = await http('/api/portal/cases', { cookie: plannerCookie })
+    const found = (list.json?.cases ?? []).find((c: { id: string }) => c.id === doctorCase.id)
+    assert(found?.pinned === true, 'case is not flagged pinned in the case list after pinning')
+    assert(typeof found?.pinnedAt === 'string' && found.pinnedAt.length > 0, 'pinned case is missing pinnedAt (stable spatial ordering key)')
+  })
+  await check('pin is idempotent (POST twice) → still pinned', async () => {
+    const res = await http(`/api/portal/cases/${doctorCase.id}/pin`, { method: 'POST', cookie: plannerCookie })
+    assert(res.status === 200 && res.json?.pinned === true, `status ${res.status}: ${res.text}`)
+  })
+  await check('unpin a case → { pinned: false } and it no longer shows pinned', async () => {
+    const res = await http(`/api/portal/cases/${doctorCase.id}/pin`, { method: 'DELETE', cookie: plannerCookie })
+    assert(res.status === 200, `status ${res.status}: ${res.text}`)
+    assert(res.json?.pinned === false, `expected pinned:false, got ${JSON.stringify(res.json)}`)
+    const list = await http('/api/portal/cases', { cookie: plannerCookie })
+    const found = (list.json?.cases ?? []).find((c: { id: string }) => c.id === doctorCase.id)
+    assert(!found?.pinned, 'case is still flagged pinned in the list after unpinning')
+  })
+  await check('unpin is idempotent (DELETE when not pinned) → 200', async () => {
+    const res = await http(`/api/portal/cases/${doctorCase.id}/pin`, { method: 'DELETE', cookie: plannerCookie })
+    assert(res.status === 200 && res.json?.pinned === false, `status ${res.status}: ${res.text}`)
+  })
+  await check('pin a nonexistent case → 404', async () => {
+    const res = await http('/api/portal/cases/ZZZZZZZ/pin', { method: 'POST', cookie: plannerCookie })
+    assert(res.status === 404, `expected 404, got ${res.status}`)
+  })
+  await check("doctor cannot pin another doctor's case → 403", async () => {
+    if (!doctorCookie) return 'skip'
+    const other = allCases.find(c => String(c.doctorId) !== String(doctorCase.doctorId))
+    if (!other) return 'skip'
+    const res = await http(`/api/portal/cases/${other.id}/pin`, { method: 'POST', cookie: doctorCookie })
+    assert(res.status === 403, `expected 403, got ${res.status}`)
+  })
+  await check('pins are per-user: planner pin does not leak into the doctor list', async () => {
+    if (!doctorCookie) return 'skip'
+    await http(`/api/portal/cases/${doctorCase.id}/pin`, { method: 'POST', cookie: plannerCookie })
+    const list = await http('/api/portal/cases', { cookie: doctorCookie })
+    const found = (list.json?.cases ?? []).find((c: { id: string }) => c.id === doctorCase.id)
+    assert(found ? !found.pinned : true, "planner's pin leaked into the doctor's case list")
+    // clean up the planner pin so state is neutral for re-runs
+    await http(`/api/portal/cases/${doctorCase.id}/pin`, { method: 'DELETE', cookie: plannerCookie })
+  })
+  await check('case detail reports pin status (powers the message-view pin button)', async () => {
+    await http(`/api/portal/cases/${doctorCase.id}/pin`, { method: 'POST', cookie: plannerCookie })
+    const on = await http(`/api/portal/cases/${doctorCase.id}`, { cookie: plannerCookie })
+    assert(on.json?.case?.pinned === true, 'case detail did not report pinned:true after pin')
+    await http(`/api/portal/cases/${doctorCase.id}/pin`, { method: 'DELETE', cookie: plannerCookie })
+    const off = await http(`/api/portal/cases/${doctorCase.id}`, { cookie: plannerCookie })
+    assert(!off.json?.case?.pinned, 'case detail still reported pinned after unpin')
+  })
+
   // ---- Notifications lifecycle --------------------------------------------
   console.log('\nNotifications')
   await check('lab message notifies the doctor; title = CASE TITLE (not DL-####)', async () => {

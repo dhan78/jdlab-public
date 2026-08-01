@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { verifySessionToken } from '@/lib/portal-auth'
 import { findDoctorById } from '@/lib/portal-store'
 import AddressBook from '@/components/AddressBook'
+import LogoutButton from '@/components/LogoutButton'
 
 export const metadata = {
   title: 'My Profile — JD Dental Lab Portal',
@@ -53,6 +54,12 @@ export default async function PortalProfilePage() {
               Add the locations you work from. Your preferred address is used as the default ship-to when you create a case.
             </p>
             <AddressBook doctorId={session.sub} />
+          </section>
+
+          <section aria-labelledby="session-heading" className="border-t border-gray-200 pt-6">
+            <h2 id="session-heading" className="text-xl font-bold text-gray-800 mb-1">Session</h2>
+            <p className="text-sm text-gray-500 mb-4">Sign out of the portal on this device.</p>
+            <LogoutButton />
           </section>
         </div>
       </div>

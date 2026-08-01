@@ -7,6 +7,7 @@ import {
   updateCaseStatus,
   setScanReceived,
   getUnreadCounts,
+  isCasePinned,
   CASE_STATUSES,
   CASE_STATUS_LABELS,
   type CaseStatus,
@@ -61,8 +62,9 @@ export async function GET(
   })
 
   const unread = await getUnreadCounts(session.sub, session.role)
+  const pinned = await isCasePinned(session.sub, id)
   return NextResponse.json({
-    case: caseRow,
+    case: { ...caseRow, pinned },
     messages: await listMessagesForCase(id),
     slaConfig: await getSlaConfigMap(),
     unreadCount: unread[id] ?? 0,
