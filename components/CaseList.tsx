@@ -544,7 +544,7 @@ export default function CaseList() {
   const appliedFilters: string[] = []
   if (rushOnly) appliedFilters.push('Rush')
   if (unreadOnly) appliedFilters.push('Unread')
-  if (q) appliedFilters.push(`"${query.trim()}"`)
+  if (q) appliedFilters.push(`“${query.trim()}”`)
   const visibleCases = cases
     .filter(c =>
       scope === 'all' ? true : scope === 'shipped' ? c.status === 'shipped' : c.status !== 'shipped'

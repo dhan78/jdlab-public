@@ -14,11 +14,15 @@
  *   - Served from a blob: URL (re-typed text/html) so large exports load cleanly
  *     and no markup is ever injected into our own document.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
-export default function HtmlViewer({ dataUrl, className }: { dataUrl: string; className?: string }) {
+export default function HtmlViewer({ dataUrl, className, onError }: { dataUrl: string; className?: string; onError?: (detail: string) => void }) {
   const [src, setSrc] = useState<string | null>(null)
   const [error, setError] = useState(false)
+  const onErrorRef = useRef(onError)
+  useEffect(() => {
+    onErrorRef.current = onError
+  }, [onError])
 
   useEffect(() => {
     let objectUrl: string | null = null
@@ -36,7 +40,12 @@ export default function HtmlViewer({ dataUrl, className }: { dataUrl: string; cl
           objectUrl = URL.createObjectURL(b.slice(0, b.size, 'text/html'))
           setSrc(objectUrl)
         })
-        .catch(() => !cancelled && setError(true))
+        .catch(() => {
+          if (!cancelled) {
+            setError(true)
+            onErrorRef.current?.('html viewer fetch failed')
+          }
+        })
     } else {
       setSrc(dataUrl)
     }

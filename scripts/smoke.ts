@@ -297,13 +297,17 @@ async function main() {
     const res = await http(`/api/portal/cases/${other.id}/pin`, { method: 'POST', cookie: doctorCookie })
     assert(res.status === 403, `expected 403, got ${res.status}`)
   })
-  await check('pins are per-user: planner pin does not leak into the doctor list', async () => {
+  await check('pins are per-user: planner pin does not change the doctor list', async () => {
     if (!doctorCookie) return 'skip'
+    const doctorPinned = async () => {
+      const r = await http('/api/portal/cases', { cookie: doctorCookie })
+      return !!(r.json?.cases ?? []).find((c: { id: string; pinned?: boolean }) => c.id === doctorCase.id)?.pinned
+    }
+    const before = await doctorPinned()
     await http(`/api/portal/cases/${doctorCase.id}/pin`, { method: 'POST', cookie: plannerCookie })
-    const list = await http('/api/portal/cases', { cookie: doctorCookie })
-    const found = (list.json?.cases ?? []).find((c: { id: string }) => c.id === doctorCase.id)
-    assert(found ? !found.pinned : true, "planner's pin leaked into the doctor's case list")
-    // clean up the planner pin so state is neutral for re-runs
+    const after = await doctorPinned()
+    assert(after === before, "planner's pin changed the doctor's pin state (not per-user isolated)")
+    // restore the planner's pin state to neutral for re-runs
     await http(`/api/portal/cases/${doctorCase.id}/pin`, { method: 'DELETE', cookie: plannerCookie })
   })
   await check('case detail reports pin status (powers the message-view pin button)', async () => {
@@ -313,6 +317,68 @@ async function main() {
     await http(`/api/portal/cases/${doctorCase.id}/pin`, { method: 'DELETE', cookie: plannerCookie })
     const off = await http(`/api/portal/cases/${doctorCase.id}`, { cookie: plannerCookie })
     assert(!off.json?.case?.pinned, 'case detail still reported pinned after unpin')
+  })
+
+  // ---- 3D annotations (surface pins on a model attachment) -----------------
+  console.log('\nAnnotations')
+  let modelAttachmentId = ''
+  let createdAnnotationId = ''
+  await check('seed a model attachment to annotate → 201', async () => {
+    const dataUrl = 'data:application/octet-stream;base64,' + Buffer.from('solid test\nendsolid test').toString('base64')
+    const res = await http(`/api/portal/cases/${doctorCase.id}/messages`, {
+      method: 'POST', cookie: plannerCookie,
+      body: { body: 'scan', attachments: [{ name: 'annot-scan.stl', mimeType: '', size: 22, dataUrl }] },
+    })
+    assert(res.status === 201, `status ${res.status}: ${res.text}`)
+    const msgs: Array<{ attachments?: Array<{ id: string; name: string }> }> = res.json?.messages ?? []
+    for (const m of msgs) for (const a of m.attachments ?? []) if (a.name === 'annot-scan.stl') modelAttachmentId = a.id
+    assert(modelAttachmentId, 'could not find the seeded .stl attachment id')
+  })
+  await check('annotation requires auth → 401', async () => {
+    const res = await http(`/api/portal/cases/${doctorCase.id}/annotations`, { method: 'POST', body: { attachmentId: modelAttachmentId, x: 0, y: 0, z: 0, body: 'x' } })
+    assert(res.status === 401, `expected 401, got ${res.status}`)
+  })
+  await check('create a pin → 201 and it appears in the list with canDelete', async () => {
+    const res = await http(`/api/portal/cases/${doctorCase.id}/annotations`, { method: 'POST', cookie: plannerCookie, body: { attachmentId: modelAttachmentId, x: 0.1, y: -0.2, z: 0.3, body: 'open this contact' } })
+    assert(res.status === 201, `status ${res.status}: ${res.text}`)
+    createdAnnotationId = res.json?.annotation?.id
+    assert(createdAnnotationId, 'created annotation has no id')
+    assert(res.json?.annotation?.canDelete === true, 'author should be able to delete their own pin')
+    const list = await http(`/api/portal/cases/${doctorCase.id}/annotations`, { cookie: plannerCookie })
+    const found = (list.json?.annotations ?? []).find((a: { id: string }) => a.id === createdAnnotationId)
+    assert(found?.attachmentId === modelAttachmentId, 'pin not returned for its attachment')
+    assert(found?.body === 'open this contact', 'pin note not persisted')
+  })
+  await check('pin without a note → 400', async () => {
+    const res = await http(`/api/portal/cases/${doctorCase.id}/annotations`, { method: 'POST', cookie: plannerCookie, body: { attachmentId: modelAttachmentId, x: 0, y: 0, z: 0, body: '   ' } })
+    assert(res.status === 400, `expected 400, got ${res.status}`)
+  })
+  await check('pin without a surface point → 400', async () => {
+    const res = await http(`/api/portal/cases/${doctorCase.id}/annotations`, { method: 'POST', cookie: plannerCookie, body: { attachmentId: modelAttachmentId, body: 'no point' } })
+    assert(res.status === 400, `expected 400, got ${res.status}`)
+  })
+  await check('pin on an attachment not in this case → 404', async () => {
+    const other = allCases.find(c => c.id !== doctorCase.id)
+    if (!other) return 'skip'
+    const res = await http(`/api/portal/cases/${other.id}/annotations`, { method: 'POST', cookie: plannerCookie, body: { attachmentId: modelAttachmentId, x: 0, y: 0, z: 0, body: 'wrong case' } })
+    assert(res.status === 404, `expected 404, got ${res.status}`)
+  })
+  await check("doctor cannot annotate another doctor's case → 403", async () => {
+    if (!doctorCookie) return 'skip'
+    const other = allCases.find(c => String(c.doctorId) !== String(doctorCase.doctorId))
+    if (!other) return 'skip'
+    const res = await http(`/api/portal/cases/${other.id}/annotations`, { method: 'POST', cookie: doctorCookie, body: { attachmentId: modelAttachmentId, x: 0, y: 0, z: 0, body: 'nope' } })
+    assert(res.status === 403, `expected 403, got ${res.status}`)
+  })
+  await check('delete a pin → 200 and it is gone; deleting again → 404', async () => {
+    if (!createdAnnotationId) return 'skip'
+    const del = await http(`/api/portal/cases/${doctorCase.id}/annotations/${createdAnnotationId}`, { method: 'DELETE', cookie: plannerCookie })
+    assert(del.status === 200, `status ${del.status}: ${del.text}`)
+    const list = await http(`/api/portal/cases/${doctorCase.id}/annotations`, { cookie: plannerCookie })
+    const gone = !(list.json?.annotations ?? []).some((a: { id: string }) => a.id === createdAnnotationId)
+    assert(gone, 'pin still present after delete')
+    const again = await http(`/api/portal/cases/${doctorCase.id}/annotations/${createdAnnotationId}`, { method: 'DELETE', cookie: plannerCookie })
+    assert(again.status === 404, `expected 404 on second delete, got ${again.status}`)
   })
 
   // ---- Notifications lifecycle --------------------------------------------
@@ -405,6 +471,39 @@ async function main() {
     await res.body?.cancel().catch(() => {})
     assert(res.status === 200, `status ${res.status}`)
     assert(ct.includes('text/event-stream'), `content-type "${ct}"`)
+  })
+  await check('status change is delivered as an SSE "update" event (powers the live sidebar/thread)', async () => {
+    if (!doctorCookie) return 'skip'
+    // Open the OWNER's stream (a doctor only receives events for their own cases,
+    // so this also exercises the role scoping). Then change the status as the
+    // PLANNER — the cross-user path the live progress bar relies on.
+    const controller = new AbortController()
+    const res = await fetch(BASE + '/api/portal/stream', { headers: { Cookie: doctorCookie }, signal: controller.signal })
+    assert(res.status === 200 && !!res.body, `stream status ${res.status}`)
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    const killer = setTimeout(() => controller.abort(), 6000)
+    // Fire the status change once we're listening (a no-op to the current status
+    // still emits an update event). Fire-and-forget so we can read concurrently.
+    setTimeout(() => {
+      void http(`/api/portal/cases/${doctorCase.id}`, { method: 'PATCH', cookie: plannerCookie, body: { status: doctorCase.status } })
+    }, 300)
+    let buf = ''
+    let got = false
+    try {
+      while (!got) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        got = buf.includes('event: update') && buf.includes(`"caseId":"${doctorCase.id}"`)
+      }
+    } catch {
+      /* reader aborted on timeout */
+    }
+    clearTimeout(killer)
+    controller.abort()
+    await reader.cancel().catch(() => {})
+    assert(got, `no SSE "update" for case ${doctorCase.id} within 6s`)
   })
 
   // ---- Error flagging (client_error → telemetry, flagged kind:error) -------

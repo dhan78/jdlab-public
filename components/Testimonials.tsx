@@ -23,7 +23,7 @@ const testimonials: { quote: string; role: string; tenure: string; avatar: Avata
   },
   {
     quote:
-      'Being able to see exactly which stage a case is in — and when it ships — means I can schedule the seat appointment with confidence. No more calling to "check on it."',
+      'Being able to see exactly which stage a case is in — and when it ships — means I can schedule the seat appointment with confidence. No more calling to “check on it.”',
     role: 'General Dentist',
     tenure: '9 years in practice',
     avatar: { initials: 'GD', tint: 'bg-secondary/10 text-secondary' },
@@ -78,7 +78,7 @@ export default function Testimonials() {
               className="bg-white rounded-2xl p-7 shadow-sm ring-1 ring-gray-100 flex flex-col"
             >
               <Stars />
-              <blockquote className="text-gray-700 leading-relaxed flex-1">"{t.quote}"</blockquote>
+              <blockquote className="text-gray-700 leading-relaxed flex-1">“{t.quote}”</blockquote>
               <figcaption className="mt-6 flex items-center gap-3">
                 <span
                   className={`inline-flex items-center justify-center w-11 h-11 rounded-full font-semibold ${t.avatar.tint}`}
