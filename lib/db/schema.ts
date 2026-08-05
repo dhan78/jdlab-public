@@ -7,6 +7,7 @@ import {
   bigint,
   boolean,
   date,
+  doublePrecision,
   index,
   primaryKey,
 } from 'drizzle-orm/pg-core'
@@ -114,6 +115,35 @@ export const messageAttachments = pgTable('message_attachments', {
   dataUrl: text('data_url'), // base64 fallback for local dev
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
+
+// 3D surface annotations: pins a doctor or planner drops on a specific model
+// attachment to point at an exact spot on the scan ("open this contact",
+// "margin short here"). Coordinates are stored in the centered-geometry local
+// space so they re-anchor to the same surface point every time the model loads.
+export const caseAnnotations = pgTable(
+  'case_annotations',
+  {
+    id: serial('id').primaryKey(),
+    caseId: integer('case_id')
+      .notNull()
+      .references(() => cases.id, { onDelete: 'cascade' }),
+    attachmentId: integer('attachment_id')
+      .notNull()
+      .references(() => messageAttachments.id, { onDelete: 'cascade' }),
+    x: doublePrecision('x').notNull(),
+    y: doublePrecision('y').notNull(),
+    z: doublePrecision('z').notNull(),
+    body: text('body').notNull().default(''),
+    authorId: integer('author_id').references(() => users.id, { onDelete: 'set null' }),
+    authorName: text('author_name').notNull(),
+    authorRole: text('author_role').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  t => ({
+    caseIdx: index('case_annotations_case_idx').on(t.caseId),
+    attachmentIdx: index('case_annotations_attachment_idx').on(t.attachmentId),
+  })
+)
 
 export const passwordResetTokens = pgTable('password_reset_tokens', {
   id: serial('id').primaryKey(),

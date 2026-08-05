@@ -40,6 +40,20 @@ interface Attachment {
   dataUrl: string
 }
 
+// A 3D surface pin on a model attachment (visible to both doctor and lab).
+interface Annotation {
+  id: string
+  attachmentId: string
+  x: number
+  y: number
+  z: number
+  body: string
+  authorName: string
+  authorRole: string
+  createdAt: string
+  canDelete?: boolean
+}
+
 interface Message {
   id: string
   authorId: string
@@ -120,6 +134,9 @@ function IconCalendar({ className = 'w-4 h-4' }: { className?: string }) {
 }
 
 // Pushpin icon: filled when pinned, outline when not. Matches the sidebar rail.
+function IconMaximize({ className = 'w-4 h-4' }: { className?: string }) {
+  return (<svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M12 3h5v5M8 17H3v-5M17 3l-6 6M3 17l6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>)
+}
 function IconPin({ filled, className = 'w-4 h-4' }: { filled?: boolean; className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -390,6 +407,72 @@ export default function CaseThread({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [dragActive, setDragActive] = useState(false)
   const [lightbox, setLightbox] = useState<{ items: Attachment[]; index: number } | null>(null)
+  // Attachment currently expanded to a full-window viewer (STL/PLY or HTML).
+  const [maximized, setMaximized] = useState<Attachment | null>(null)
+  // 3D surface pins for this case, grouped client-side by attachment id.
+  const [annotations, setAnnotations] = useState<Annotation[]>([])
+
+  // Close the full-window viewer on Escape.
+  useEffect(() => {
+    if (!maximized) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMaximized(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [maximized])
+
+  // Load 3D annotations for the case (visible to both doctor and lab). Refetched
+  // after each create/delete keeps the numbered badges consistent.
+  const loadAnnotations = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/portal/cases/${caseId}/annotations`)
+      if (res.ok) {
+        const data = await res.json()
+        setAnnotations(Array.isArray(data.annotations) ? data.annotations : [])
+      }
+    } catch {
+      /* non-fatal: the viewer still works without pins */
+    }
+  }, [caseId])
+
+  useEffect(() => {
+    void loadAnnotations()
+  }, [loadAnnotations])
+
+  // Create a pin on a specific model attachment at a picked surface point.
+  const createAnnotation = useCallback(
+    async (attachmentId: string, p: { x: number; y: number; z: number; body: string }) => {
+      try {
+        const res = await fetch(`/api/portal/cases/${caseId}/annotations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ attachmentId, ...p }),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          if (data.annotation) setAnnotations(prev => [...prev, data.annotation])
+        } else {
+          reportClientError('annotation_create', caseId, `status ${res.status}`, { status: res.status })
+        }
+      } catch (e) {
+        reportClientError('annotation_create', caseId, e instanceof Error ? e.message : 'create failed')
+      }
+    },
+    [caseId]
+  )
+
+  // Delete a pin (author-only, or admin — enforced server-side).
+  const deleteAnnotation = useCallback(
+    async (annId: string) => {
+      try {
+        const res = await fetch(`/api/portal/cases/${caseId}/annotations/${annId}`, { method: 'DELETE' })
+        if (res.ok) setAnnotations(prev => prev.filter(a => a.id !== annId))
+        else reportClientError('annotation_delete', caseId, `status ${res.status}`, { status: res.status })
+      } catch (e) {
+        reportClientError('annotation_delete', caseId, e instanceof Error ? e.message : 'delete failed')
+      }
+    },
+    [caseId]
+  )
 
   // Realtime "typing" indicator for the other participant.
   const [typingName, setTypingName] = useState<string | null>(null)
@@ -977,8 +1060,24 @@ export default function CaseThread({
                           </button>
                         ) : isModelFile(a.name) ? (
                           <div key={a.id} className="basis-full">
-                            <div className="h-72 w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
-                              <ScanViewer url={a.dataUrl} className="h-full w-full" />
+                            <div className="group relative h-72 w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
+                              <ScanViewer
+                                url={a.dataUrl}
+                                className="h-full w-full"
+                                annotations={annotations.filter(an => an.attachmentId === a.id)}
+                                onCreateAnnotation={p => createAnnotation(a.id, p)}
+                                onDeleteAnnotation={deleteAnnotation}
+                                onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: a.name.split('.').pop()?.toLowerCase(), size: a.size })}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setMaximized(a)}
+                                title="Expand to full window"
+                                aria-label="Expand to full window"
+                                className="absolute right-2 top-2 rounded-lg bg-black/40 p-1.5 text-white/90 opacity-0 backdrop-blur-sm transition hover:bg-black/60 focus:opacity-100 group-hover:opacity-100"
+                              >
+                                <IconMaximize />
+                              </button>
                             </div>
                             <a
                               href={a.dataUrl}
@@ -990,8 +1089,21 @@ export default function CaseThread({
                           </div>
                         ) : isHtmlViewer(a.name) ? (
                           <div key={a.id} className="basis-full">
-                            <div className="h-96 w-full overflow-hidden rounded-xl border border-slate-200 bg-white">
-                              <HtmlViewer dataUrl={a.dataUrl} className="h-full w-full border-0" />
+                            <div className="group relative h-96 w-full overflow-hidden rounded-xl border border-slate-200 bg-white">
+                              <HtmlViewer
+                                dataUrl={a.dataUrl}
+                                className="h-full w-full border-0"
+                                onError={detail => reportClientError('html_viewer', caseId, detail, { ext: a.name.split('.').pop()?.toLowerCase(), size: a.size })}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setMaximized(a)}
+                                title="Expand to full window"
+                                aria-label="Expand to full window"
+                                className="absolute right-2 top-2 rounded-lg bg-slate-900/50 p-1.5 text-white opacity-0 backdrop-blur-sm transition hover:bg-slate-900/70 focus:opacity-100 group-hover:opacity-100"
+                              >
+                                <IconMaximize />
+                              </button>
                             </div>
                             <a
                               href={a.dataUrl}
@@ -1120,6 +1232,39 @@ export default function CaseThread({
             </button>
           </div>
         </form>
+        {maximized && (
+          <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-sm">
+            <div className="flex items-center justify-between gap-4 px-4 py-3 text-slate-100">
+              <span className="truncate text-sm font-medium">{maximized.name}</span>
+              <button
+                type="button"
+                onClick={() => setMaximized(null)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm text-white transition hover:bg-white/20"
+              >
+                Close
+                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
+              </button>
+            </div>
+            <div className="min-h-0 flex-1">
+              {isModelFile(maximized.name) ? (
+                <ScanViewer
+                  url={maximized.dataUrl}
+                  className="h-full w-full"
+                  annotations={annotations.filter(an => an.attachmentId === maximized.id)}
+                  onCreateAnnotation={p => createAnnotation(maximized.id, p)}
+                  onDeleteAnnotation={deleteAnnotation}
+                  onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true })}
+                />
+              ) : (
+                <HtmlViewer
+                  dataUrl={maximized.dataUrl}
+                  className="h-full w-full border-0 bg-white"
+                  onError={detail => reportClientError('html_viewer', caseId, detail, { ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true })}
+                />
+              )}
+            </div>
+          </div>
+        )}
         {lightbox && (
           <Lightbox
             items={lightbox.items}

@@ -1,5 +1,5 @@
 import { db } from './db'
-import { cases, caseMessages, messageAttachments, caseStatusHistory, users, caseReads, auditLog } from './db/schema'
+import { cases, caseMessages, messageAttachments, caseStatusHistory, users, caseReads, auditLog, caseAnnotations } from './db/schema'
 import { and, asc, desc, eq, gt, inArray, isNull, isNotNull, or, sql } from 'drizzle-orm'
 import { encodeCaseId, decodeCaseId } from './case-code'
 import { isS3Enabled, putAttachment, getAttachmentUrl, parseDataUrl } from './storage'
@@ -471,6 +471,113 @@ export async function isCasePinned(userId: string, caseId: string): Promise<bool
     .where(and(eq(caseReads.userId, uid), eq(caseReads.caseId, cid)))
     .limit(1)
   return !!row?.pinnedAt
+}
+
+// --- 3D surface annotations (pins on a specific model attachment) ---
+
+export interface CaseAnnotation {
+  id: string
+  attachmentId: string
+  x: number
+  y: number
+  z: number
+  body: string
+  authorId: string | null
+  authorName: string
+  authorRole: string
+  createdAt: string
+}
+
+function mapAnnotation(r: typeof caseAnnotations.$inferSelect): CaseAnnotation {
+  return {
+    id: String(r.id),
+    attachmentId: String(r.attachmentId),
+    x: r.x,
+    y: r.y,
+    z: r.z,
+    body: r.body,
+    authorId: r.authorId != null ? String(r.authorId) : null,
+    authorName: r.authorName,
+    authorRole: r.authorRole,
+    createdAt: new Date(r.createdAt).toISOString(),
+  }
+}
+
+// All annotations for a case (across every model attachment), oldest first so
+// the numbered badges are stable.
+export async function listCaseAnnotations(caseId: string): Promise<CaseAnnotation[]> {
+  const cid = decodeCaseId(caseId)
+  if (cid < 0) return []
+  const rows = await db
+    .select()
+    .from(caseAnnotations)
+    .where(eq(caseAnnotations.caseId, cid))
+    .orderBy(asc(caseAnnotations.createdAt))
+  return rows.map(mapAnnotation)
+}
+
+// Create a pin. Verifies the attachment actually belongs to this case
+// (defense-in-depth: the id is enumerable). Returns null if the attachment
+// isn't part of the case.
+export async function createCaseAnnotation(
+  caseId: string,
+  input: {
+    attachmentId: string
+    x: number
+    y: number
+    z: number
+    body: string
+    authorId: string | null
+    authorName: string
+    authorRole: string
+  }
+): Promise<CaseAnnotation | null> {
+  const cid = decodeCaseId(caseId)
+  const aid = toIntId(input.attachmentId)
+  if (cid < 0 || aid < 0) return null
+  const [owner] = await db
+    .select({ id: messageAttachments.id })
+    .from(messageAttachments)
+    .innerJoin(caseMessages, eq(messageAttachments.messageId, caseMessages.id))
+    .where(and(eq(messageAttachments.id, aid), eq(caseMessages.caseId, cid)))
+    .limit(1)
+  if (!owner) return null
+  const uid = input.authorId != null ? toIntId(input.authorId) : -1
+  const [row] = await db
+    .insert(caseAnnotations)
+    .values({
+      caseId: cid,
+      attachmentId: aid,
+      x: input.x,
+      y: input.y,
+      z: input.z,
+      body: input.body.slice(0, 500),
+      authorId: uid >= 0 ? uid : null,
+      authorName: input.authorName,
+      authorRole: input.authorRole,
+    })
+    .returning()
+  return mapAnnotation(row)
+}
+
+// Delete a pin. Author may delete their own; admins may delete any. Returns
+// true if a row was removed (false = not found or not permitted).
+export async function deleteCaseAnnotation(
+  caseId: string,
+  annotationId: string,
+  requesterId: string,
+  requesterRole: string
+): Promise<boolean> {
+  const cid = decodeCaseId(caseId)
+  const id = toIntId(annotationId)
+  const uid = toIntId(requesterId)
+  if (cid < 0 || id < 0) return false
+  const where =
+    requesterRole === 'admin'
+      ? and(eq(caseAnnotations.id, id), eq(caseAnnotations.caseId, cid))
+      : and(eq(caseAnnotations.id, id), eq(caseAnnotations.caseId, cid), eq(caseAnnotations.authorId, uid))
+  const removed = await db.delete(caseAnnotations).where(where).returning({ id: caseAnnotations.id })
+  return removed.length > 0
 }
 
 export async function addMessage(input: {

@@ -23,7 +23,7 @@ function FeatureGlyph({ name, className = 'w-5 h-5' }: { name: FeatureIcon; clas
 export default function PortalShowcase() {
   const features: { icon: FeatureIcon; title: string; desc: string }[] = [
     { icon: 'chat', title: 'Real-time collaboration', desc: 'Message the lab directly on every case — no phone tag, no lost emails.' },
-    { icon: 'clock', title: 'Deadline & SLA tracking', desc: 'See exactly when each case is due and whether it`s on track for the surgery date.' },
+    { icon: 'clock', title: 'Deadline & SLA tracking', desc: 'See exactly when each case is due and whether it’s on track for the surgery date.' },
     { icon: 'pipeline', title: 'Full case lifecycle', desc: 'Follow every stage from received → design → manufacturing → QA → shipped.' },
     { icon: 'bell', title: 'Instant updates', desc: 'Unread badges and notifications the moment the lab replies or a status changes.' },
   ]

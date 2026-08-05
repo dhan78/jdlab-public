@@ -38,7 +38,7 @@ export default function PortalHeader({ name, email, role }: PortalHeaderProps) {
         className="container-wide flex h-16 items-center justify-between"
         aria-label="Portal navigation"
       >
-        {/* Brand → home (also the "My Cases" destination — no separate link needed) */}
+        {/* Brand → home (also the “My Cases” destination — no separate link needed) */}
         <Link
           href="/portal"
           className="flex items-center gap-2 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
