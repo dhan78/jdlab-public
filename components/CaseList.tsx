@@ -673,6 +673,7 @@ export default function CaseList() {
                 {isDoctor && (
                   <button
                     onClick={() => { setShowForm(v => !v); track('new_case_toggle', { open: !showForm }) }}
+                    data-intent="new_case_toggle"
                     className="inline-flex items-center gap-1 bg-primary text-white text-xs font-medium px-2.5 py-1 rounded-md hover:bg-primary/90 shadow-sm transition"
                   >
                     {showForm ? 'Cancel' : (
@@ -717,6 +718,7 @@ export default function CaseList() {
                     <button
                       type="button"
                       onClick={toggleUnreadOnly}
+                      data-intent="filter_unread_toggle"
                       aria-pressed={unreadOnly}
                       title={unreadOnly ? 'Showing only unread — click to show all' : `Show only the ${totalUnread} case${totalUnread === 1 ? '' : 's'} with unread messages`}
                       className={`relative inline-flex items-center gap-1 shrink-0 whitespace-nowrap text-xs font-semibold px-2.5 py-1 rounded-md transition duration-150 transform-gpu active:brightness-95 ${unreadOnly ? 'bg-white text-accent ring-2 ring-accent shadow-inner' : 'bg-accent text-white shadow-sm hover:shadow-md motion-safe:hover:scale-105'}`}
@@ -740,7 +742,7 @@ export default function CaseList() {
                     </button>
                   )}
                   {hasFilters && (
-                    <button type="button" onClick={clearFilters} className="shrink-0 px-2.5 py-2 text-sm text-slate-500 hover:text-primary">Clear</button>
+                    <button type="button" onClick={clearFilters} data-intent="filter_clear" className="shrink-0 px-2.5 py-2 text-sm text-slate-500 hover:text-primary">Clear</button>
                   )}
                   </div>
 
@@ -881,7 +883,7 @@ export default function CaseList() {
                   </div>
                 </div>
                 <div className="mt-5 flex justify-end">
-                  <button type="submit" disabled={creating} className="bg-primary text-white text-sm font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 shadow-sm transition disabled:opacity-60">
+                  <button type="submit" disabled={creating} data-intent="case_create" className="bg-primary text-white text-sm font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 shadow-sm transition disabled:opacity-60">
                     {creating ? 'Creating…' : 'Create Case'}
                   </button>
                 </div>
@@ -910,7 +912,7 @@ export default function CaseList() {
             ) : visibleCases.length === 0 ? (
               <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-12 text-center">
                 <p className="text-slate-500">No cases match your filters.</p>
-                <button type="button" onClick={clearFilters} className="mt-2 text-sm text-primary hover:underline">Clear filters</button>
+                <button type="button" onClick={clearFilters} data-intent="filter_clear" className="mt-2 text-sm text-primary hover:underline">Clear filters</button>
               </div>
             ) : (
                   <ul className="@container space-y-4">
@@ -923,6 +925,7 @@ export default function CaseList() {
                       <Link
                         href={`/portal/cases/${c.id}`}
                         onClick={() => { rememberListState(); track('case_open', { caseId: c.id, from: 'list' }) }}
+                        data-intent="case_open"
                         aria-current={isActive ? 'page' : undefined}
                         className={`group relative block rounded-2xl border transition-all pl-5 pr-4 py-4 overflow-hidden ${isActive ? 'border-primary ring-1 ring-primary/30 bg-primary/[0.03] shadow-md' : 'bg-white border-slate-200 hover:border-primary/40 hover:shadow-md shadow-sm'} ${isFocused ? 'ring-2 ring-primary ring-offset-1' : ''}`}
                       >
@@ -1024,6 +1027,7 @@ export default function CaseList() {
                   <button
                     type="button"
                     onClick={() => { setPage(p => Math.max(1, p - 1)); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
+                    data-intent="page_prev"
                     disabled={currentPage <= 1}
                     className="px-3 py-1.5 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
@@ -1033,6 +1037,7 @@ export default function CaseList() {
                   <button
                     type="button"
                     onClick={() => { setPage(p => Math.min(totalPages, p + 1)); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
+                    data-intent="page_next"
                     disabled={currentPage >= totalPages}
                     className="px-3 py-1.5 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
                   >

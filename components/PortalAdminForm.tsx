@@ -320,6 +320,7 @@ export default function PortalAdminForm() {
           <div className="md:col-span-3">
             <button
               type="submit"
+              data-intent="admin_doctor_create"
               disabled={submitting}
               className="btn-primary px-6 py-2 disabled:opacity-60 disabled:cursor-not-allowed"
               aria-busy={submitting}
@@ -378,6 +379,7 @@ export default function PortalAdminForm() {
                         <div className="flex items-center gap-3">
                           <button
                             onClick={() => (editingId === doctor.id ? cancelEdit() : startEdit(doctor))}
+                            data-intent="admin_doctor_edit_toggle"
                             className="text-primary hover:text-primary/80 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
                             aria-label={`Edit ${doctor.name}`}
                             aria-expanded={editingId === doctor.id}
@@ -386,6 +388,7 @@ export default function PortalAdminForm() {
                           </button>
                           <button
                             onClick={() => handleDelete(doctor.id)}
+                            data-intent="admin_doctor_delete"
                             disabled={deleteStatus[doctor.id] === 'deleting'}
                             className="text-red-600 hover:text-red-800 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 rounded disabled:opacity-50"
                             aria-label={`Delete ${doctor.name}`}
@@ -496,6 +499,7 @@ export default function PortalAdminForm() {
                             <button
                               type="button"
                               onClick={() => handleEditSave(doctor.id)}
+                              data-intent="admin_doctor_edit_save"
                               disabled={editSaving}
                               className="btn-primary px-6 py-2 disabled:opacity-60 disabled:cursor-not-allowed"
                               aria-busy={editSaving}
@@ -505,6 +509,7 @@ export default function PortalAdminForm() {
                             <button
                               type="button"
                               onClick={cancelEdit}
+                              data-intent="admin_doctor_edit_cancel"
                               disabled={editSaving}
                               className="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 rounded-lg disabled:opacity-60"
                             >

@@ -25,7 +25,7 @@ const ScanViewer = dynamic(() => import('./ScanViewer'), {
     <div className="flex h-72 items-center justify-center text-sm text-slate-400">Loading 3D viewer…</div>
   ),
 })
-const isModelFile = (name: string) => /\.(stl|ply)$/i.test(name)
+const isModelFile = (name: string) => /\.(stl|ply|glb)$/i.test(name)
 // exocad WebViewer (and similar tools) export a self-contained interactive HTML
 // file for design / treatment-plan verification — render it inline, sandboxed.
 const isHtmlViewer = (name: string) => /\.html?$/i.test(name)
@@ -44,9 +44,13 @@ interface Attachment {
 interface Annotation {
   id: string
   attachmentId: string
+  kind?: string // 'pin' | 'measure'
   x: number
   y: number
   z: number
+  bx?: number | null
+  by?: number | null
+  bz?: number | null
   body: string
   authorName: string
   authorRole: string
@@ -308,10 +312,10 @@ function Lightbox({
           {items.length > 1 && <span className="text-white/50"> · {index + 1}/{items.length}</span>}
         </span>
         <div className="flex items-center gap-2 flex-shrink-0">
-          <a href={item.dataUrl} download={item.name} onClick={e => e.stopPropagation()} aria-label="Download" className={iconBtn}>
+          <a href={item.dataUrl} download={item.name} data-intent="image_download" onClick={e => e.stopPropagation()} aria-label="Download" className={iconBtn}>
             <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </a>
-          <button onClick={onClose} aria-label="Close" className={iconBtn}>
+          <button onClick={onClose} data-intent="lightbox_close" aria-label="Close" className={iconBtn}>
             <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" /></svg>
           </button>
         </div>
@@ -319,12 +323,12 @@ function Lightbox({
 
       {/* prev / next */}
       {index > 0 && (
-        <button onClick={e => { e.stopPropagation(); onNav(index - 1) }} aria-label="Previous image" className="absolute left-3 w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center">
+        <button onClick={e => { e.stopPropagation(); onNav(index - 1) }} data-intent="image_prev" aria-label="Previous image" className="absolute left-3 w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center">
           <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M15 6l-6 6 6 6" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
       )}
       {index < items.length - 1 && (
-        <button onClick={e => { e.stopPropagation(); onNav(index + 1) }} aria-label="Next image" className="absolute right-3 w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center">
+        <button onClick={e => { e.stopPropagation(); onNav(index + 1) }} data-intent="image_next" aria-label="Next image" className="absolute right-3 w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center">
           <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
       )}
@@ -356,14 +360,14 @@ function Lightbox({
 
       {/* zoom controls */}
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-full bg-white/10 backdrop-blur px-2 py-1 text-white" onClick={e => e.stopPropagation()}>
-        <button onClick={() => zoomBy(0.8)} aria-label="Zoom out" className="w-9 h-9 rounded-full hover:bg-white/20 flex items-center justify-center">
+        <button onClick={() => zoomBy(0.8)} data-intent="lightbox_zoom_out" aria-label="Zoom out" className="w-9 h-9 rounded-full hover:bg-white/20 flex items-center justify-center">
           <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M8 11h6M20 20l-3.5-3.5" strokeLinecap="round" /></svg>
         </button>
         <span className="w-12 text-center text-xs tabular-nums">{Math.round(scale * 100)}%</span>
-        <button onClick={() => zoomBy(1.25)} aria-label="Zoom in" className="w-9 h-9 rounded-full hover:bg-white/20 flex items-center justify-center">
+        <button onClick={() => zoomBy(1.25)} data-intent="lightbox_zoom_in" aria-label="Zoom in" className="w-9 h-9 rounded-full hover:bg-white/20 flex items-center justify-center">
           <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M11 8v6M8 11h6M20 20l-3.5-3.5" strokeLinecap="round" /></svg>
         </button>
-        <button onClick={reset} aria-label="Reset zoom" className="w-9 h-9 rounded-full hover:bg-white/20 flex items-center justify-center">
+        <button onClick={reset} data-intent="lightbox_zoom_reset" aria-label="Reset zoom" className="w-9 h-9 rounded-full hover:bg-white/20 flex items-center justify-center">
           <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
       </div>
@@ -440,7 +444,13 @@ export default function CaseThread({
 
   // Create a pin on a specific model attachment at a picked surface point.
   const createAnnotation = useCallback(
-    async (attachmentId: string, p: { x: number; y: number; z: number; body: string }) => {
+    async (
+      attachmentId: string,
+      p: {
+        x: number; y: number; z: number; body: string
+        kind?: string; bx?: number; by?: number; bz?: number
+      }
+    ) => {
       try {
         const res = await fetch(`/api/portal/cases/${caseId}/annotations`, {
           method: 'POST',
@@ -450,6 +460,8 @@ export default function CaseThread({
         if (res.ok) {
           const data = await res.json()
           if (data.annotation) setAnnotations(prev => [...prev, data.annotation])
+          // PHI-safe: kind + note LENGTH only, never the note text.
+          track('annotation_add', { caseId, kind: p.kind ?? 'pin', len: p.body.length })
         } else {
           reportClientError('annotation_create', caseId, `status ${res.status}`, { status: res.status })
         }
@@ -465,8 +477,10 @@ export default function CaseThread({
     async (annId: string) => {
       try {
         const res = await fetch(`/api/portal/cases/${caseId}/annotations/${annId}`, { method: 'DELETE' })
-        if (res.ok) setAnnotations(prev => prev.filter(a => a.id !== annId))
-        else reportClientError('annotation_delete', caseId, `status ${res.status}`, { status: res.status })
+        if (res.ok) {
+          setAnnotations(prev => prev.filter(a => a.id !== annId))
+          track('annotation_remove', { caseId })
+        } else reportClientError('annotation_delete', caseId, `status ${res.status}`, { status: res.status })
       } catch (e) {
         reportClientError('annotation_delete', caseId, e instanceof Error ? e.message : 'delete failed')
       }
@@ -600,7 +614,7 @@ export default function CaseThread({
     void fetch(`/api/portal/cases/${caseId}/typing`, { method: 'POST' }).catch(() => {})
   }, [caseId])
 
-  const handleFiles = async (files: FileList | null) => {
+  const handleFiles = async (files: FileList | null, source: 'picker' | 'drop' | 'paste' = 'picker') => {
     if (!files) return
     setSendError('')
     const next: PendingAttachment[] = []
@@ -632,6 +646,10 @@ export default function CaseThread({
           continue
         }
       }
+      // PHI-safe activity signal: record that a file was attached — extension,
+      // size, and how it was added — but NEVER the filename. Patient names
+      // commonly live in scan filenames, so they must not enter telemetry.
+      track('attach_add', { caseId, ext, size: file.size, source })
       next.push({ file, name: file.name, mimeType: file.type, size: file.size, dataUrl })
     }
     setPending(prev => [...prev, ...next])
@@ -655,10 +673,10 @@ export default function CaseThread({
   const onDropFiles = (e: React.DragEvent) => {
     e.preventDefault()
     setDragActive(false)
-    if (e.dataTransfer?.files?.length) void handleFiles(e.dataTransfer.files)
+    if (e.dataTransfer?.files?.length) void handleFiles(e.dataTransfer.files, 'drop')
   }
   const onPasteFiles = (e: React.ClipboardEvent) => {
-    if (e.clipboardData?.files?.length) void handleFiles(e.clipboardData.files)
+    if (e.clipboardData?.files?.length) void handleFiles(e.clipboardData.files, 'paste')
   }
 
   // Resolve one pending file into a message attachment: upload directly to S3
@@ -725,7 +743,14 @@ export default function CaseThread({
       })
       const data = await res.json()
       if (res.ok) {
-        track('message_send', { caseId, len: body.trim().length, attachments: resolved.length })
+        // PHI-safe: body length (not text) + per-attachment ext/size (not names).
+        track('message_send', {
+          caseId,
+          len: body.trim().length,
+          attachments: resolved.length,
+          exts: resolved.map(r => r.name.split('.').pop()?.toLowerCase()),
+          bytes: resolved.reduce((sum, r) => sum + r.size, 0),
+        })
         setMessages(data.messages ?? [])
         setBody('')
         setPending([])
@@ -934,20 +959,21 @@ export default function CaseThread({
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
               <button
                 type="button"
+                data-intent="case_pin_toggle"
                 onClick={togglePin}
                 title={caseDetail.pinned ? 'Unpin this case' : 'Pin this case to keep it in your recently-viewed list'}
+                aria-label={caseDetail.pinned ? 'Unpin this case' : 'Pin this case'}
                 aria-pressed={!!caseDetail.pinned}
-                className={`inline-flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg border transition ${
+                className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border transition ${
                   caseDetail.pinned
                     ? 'border-primary bg-primary text-white hover:bg-primary/90'
                     : 'border-slate-300 text-slate-600 hover:bg-slate-50 hover:text-primary'
                 }`}
               >
                 <IconPin filled={caseDetail.pinned} className="w-4 h-4" />
-                {caseDetail.pinned ? 'Pinned' : 'Pin'}
               </button>
               {(() => {
                 const read = unreadCount === 0
@@ -955,15 +981,17 @@ export default function CaseThread({
                   <button
                     type="button"
                     onClick={() => { if (read) { markUnread(); setUnreadCount(1) } else { markRead(true); setUnreadCount(0) } }}
+                    data-intent="case_read_toggle"
                     title={read ? 'Mark this case as unread' : 'Mark this case as read'}
-                    className="inline-flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg border border-primary/40 bg-primary/5 text-primary hover:bg-primary/10 transition"
+                    aria-label={read ? 'Mark this case as unread' : 'Mark this case as read'}
+                    className="inline-flex h-9 items-center gap-1.5 text-sm px-2.5 sm:px-3 rounded-lg border border-primary/40 bg-primary/5 text-primary hover:bg-primary/10 transition"
                   >
                     {read ? (
                       <span className="w-2 h-2 rounded-full bg-accent" aria-hidden="true" />
                     ) : (
                       <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M4 10.5l3.5 3.5L16 5.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
                     )}
-                    {read ? 'Mark as unread' : `Mark as read${unreadCount > 1 ? ` (${unreadCount})` : ''}`}
+                    <span className="hidden sm:inline">{read ? 'Mark unread' : `Mark read${unreadCount > 1 ? ` (${unreadCount})` : ''}`}</span>
                   </button>
                 )
               })()}
@@ -971,6 +999,7 @@ export default function CaseThread({
                 <button
                   type="button"
                   onClick={() => markScansReceived(true)}
+                  data-intent="scans_received_mark"
                   disabled={statusSaving}
                   title="Mark that the scan files arrived — starts the turnaround clock"
                   className="inline-flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg bg-primary text-white hover:bg-primary/90 shadow-sm transition disabled:opacity-60"
@@ -1004,6 +1033,7 @@ export default function CaseThread({
               <button
                 type="button"
                 disabled
+                data-intent="call_start"
                 title="Live video call — coming soon"
                 className="inline-flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg border border-slate-200 text-slate-400 cursor-not-allowed"
               >
@@ -1044,6 +1074,7 @@ export default function CaseThread({
                           <button
                             key={a.id}
                             type="button"
+                            data-intent="image_open"
                             onClick={() => {
                               const imgs = m.attachments.filter(x => x.mimeType.startsWith('image/'))
                               setLightbox({ items: imgs, index: imgs.findIndex(x => x.id === a.id) })
@@ -1067,10 +1098,13 @@ export default function CaseThread({
                                 annotations={annotations.filter(an => an.attachmentId === a.id)}
                                 onCreateAnnotation={p => createAnnotation(a.id, p)}
                                 onDeleteAnnotation={deleteAnnotation}
+                                onLoad={() => track('scan_view', { caseId, ext: a.name.split('.').pop()?.toLowerCase(), size: a.size })}
                                 onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: a.name.split('.').pop()?.toLowerCase(), size: a.size })}
                               />
                               <button
                                 type="button"
+                                data-intent="viewer_maximize"
+                                data-intent-meta="model"
                                 onClick={() => setMaximized(a)}
                                 title="Expand to full window"
                                 aria-label="Expand to full window"
@@ -1082,6 +1116,8 @@ export default function CaseThread({
                             <a
                               href={a.dataUrl}
                               download={a.name}
+                              data-intent="attachment_download"
+                              data-intent-meta="model"
                               className="mt-1 inline-flex items-center gap-1 text-xs text-slate-500 hover:text-primary"
                             >
                               {a.name} <span className="text-slate-400">({formatSize(a.size)})</span>
@@ -1093,10 +1129,13 @@ export default function CaseThread({
                               <HtmlViewer
                                 dataUrl={a.dataUrl}
                                 className="h-full w-full border-0"
+                                onLoad={() => track('html_view', { caseId, ext: a.name.split('.').pop()?.toLowerCase(), size: a.size })}
                                 onError={detail => reportClientError('html_viewer', caseId, detail, { ext: a.name.split('.').pop()?.toLowerCase(), size: a.size })}
                               />
                               <button
                                 type="button"
+                                data-intent="viewer_maximize"
+                                data-intent-meta="html"
                                 onClick={() => setMaximized(a)}
                                 title="Expand to full window"
                                 aria-label="Expand to full window"
@@ -1108,6 +1147,8 @@ export default function CaseThread({
                             <a
                               href={a.dataUrl}
                               download={a.name}
+                              data-intent="attachment_download"
+                              data-intent-meta="html"
                               className="mt-1 inline-flex items-center gap-1 text-xs text-slate-500 hover:text-primary"
                             >
                               {a.name} <span className="text-slate-400">({formatSize(a.size)}) · treatment-plan viewer</span>
@@ -1118,6 +1159,8 @@ export default function CaseThread({
                             key={a.id}
                             href={a.dataUrl}
                             download={a.name}
+                            data-intent="attachment_download"
+                            data-intent-meta="file"
                             className="text-sm text-primary hover:bg-slate-50 flex items-center gap-2 border border-slate-200 rounded-lg px-3 py-2 transition-colors"
                           >
                             <svg className="w-4 h-4 text-slate-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M13 7l-5.5 5.5a2 2 0 0 0 2.8 2.8L16 9a3.5 3.5 0 0 0-5-5l-6 6a5 5 0 0 0 7 7l5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -1181,7 +1224,7 @@ export default function CaseThread({
                 <span key={i} className="inline-flex items-center gap-2 text-sm bg-slate-100 text-slate-700 rounded-lg px-3 py-1.5">
                   <svg className="w-3.5 h-3.5 text-slate-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M13 7l-5.5 5.5a2 2 0 0 0 2.8 2.8L16 9a3.5 3.5 0 0 0-5-5l-6 6a5 5 0 0 0 7 7l5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
                   {p.name} <span className="text-slate-400">({formatSize(p.size)})</span>
-                  <button type="button" onClick={() => removePending(i)} aria-label={`Remove ${p.name}`} className="text-slate-400 hover:text-red-600">✕</button>
+                  <button type="button" onClick={() => removePending(i)} data-intent="attach_remove" aria-label={`Remove ${p.name}`} className="text-slate-400 hover:text-red-600">✕</button>
                 </span>
               ))}
             </div>
@@ -1189,7 +1232,7 @@ export default function CaseThread({
 
           <div className="mt-3 flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <label className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-primary cursor-pointer transition-colors">
+              <label data-intent="attach_files" className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-primary cursor-pointer transition-colors">
                 <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M13 7l-5.5 5.5a2 2 0 0 0 2.8 2.8L16 9a3.5 3.5 0 0 0-5-5l-6 6a5 5 0 0 0 7 7l5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 Attach files
                 <input
@@ -1212,6 +1255,7 @@ export default function CaseThread({
                 ) : (
                   <button
                     type="button"
+                    data-intent="design_approve"
                     onClick={handleApprove}
                     disabled={approving || sending}
                     title="Approve the design — a quick sign-off; does not delay shipping"
@@ -1225,6 +1269,7 @@ export default function CaseThread({
             </div>
             <button
               type="submit"
+              data-intent="message_send"
               disabled={sending || (!body.trim() && pending.length === 0)}
               className="bg-primary text-white text-sm font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 shadow-sm transition disabled:opacity-50"
             >
@@ -1238,6 +1283,7 @@ export default function CaseThread({
               <span className="truncate text-sm font-medium">{maximized.name}</span>
               <button
                 type="button"
+                data-intent="viewer_close"
                 onClick={() => setMaximized(null)}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm text-white transition hover:bg-white/20"
               >
@@ -1253,12 +1299,14 @@ export default function CaseThread({
                   annotations={annotations.filter(an => an.attachmentId === maximized.id)}
                   onCreateAnnotation={p => createAnnotation(maximized.id, p)}
                   onDeleteAnnotation={deleteAnnotation}
+                  onLoad={() => track('scan_view', { caseId, ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true })}
                   onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true })}
                 />
               ) : (
                 <HtmlViewer
                   dataUrl={maximized.dataUrl}
                   className="h-full w-full border-0 bg-white"
+                  onLoad={() => track('html_view', { caseId, ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true })}
                   onError={detail => reportClientError('html_viewer', caseId, detail, { ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true })}
                 />
               )}

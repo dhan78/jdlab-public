@@ -17,15 +17,6 @@ function initials(name: string): string {
   return (p[0][0] + p[p.length - 1][0]).toUpperCase()
 }
 
-function IconUser({ className = 'w-4 h-4' }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-      <circle cx="10" cy="6.5" r="3" />
-      <path d="M4 16c0-3 2.7-4.5 6-4.5s6 1.5 6 4.5" strokeLinecap="round" />
-    </svg>
-  )
-}
-
 export default function PortalHeader({ name, email, role }: PortalHeaderProps) {
   const roleLabel = role === 'doctor' ? 'Doctor' : role === 'planner' ? 'Planning' : 'Admin'
 
@@ -41,6 +32,7 @@ export default function PortalHeader({ name, email, role }: PortalHeaderProps) {
         {/* Brand → home (also the “My Cases” destination — no separate link needed) */}
         <Link
           href="/portal"
+          data-intent="nav_cases"
           className="flex items-center gap-2 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
           aria-label="JD Lab Portal — home"
         >
@@ -48,10 +40,11 @@ export default function PortalHeader({ name, email, role }: PortalHeaderProps) {
           <span className="text-sm font-semibold tracking-tight text-primary">Portal</span>
         </Link>
 
-        <div className="flex items-center gap-1 sm:gap-1.5">
+        <div className="flex items-center gap-1 sm:gap-2">
           {role === 'admin' && (
             <Link
               href="/portal/admin"
+              data-intent="nav_admin"
               className="hidden rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-primary sm:inline-flex"
               aria-label="Admin dashboard"
             >
@@ -59,33 +52,29 @@ export default function PortalHeader({ name, email, role }: PortalHeaderProps) {
             </Link>
           )}
 
-          <Link
-            href="/portal/profile"
-            className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-primary"
-            aria-label="My profile"
-          >
-            <IconUser className="h-4 w-4" />
-            <span className="hidden sm:inline">Profile</span>
-          </Link>
-
           <NotificationBell />
 
-          {/* Identity + sign out */}
-          <div
-            className="ml-1 flex items-center gap-2.5 border-l border-gray-200 pl-2 sm:pl-3"
+          <span className="mx-0.5 hidden h-6 w-px bg-gray-200 sm:block" aria-hidden="true" />
+
+          {/* Account chip → profile (avatar doubles as the profile link) */}
+          <Link
+            href="/portal/profile"
+            data-intent="nav_profile"
             title={email}
+            aria-label="My profile"
+            className="flex items-center gap-2.5 rounded-full py-1 pl-1 pr-1 transition-colors hover:bg-gray-50 sm:pr-3"
           >
-            <div
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary"
+            <span
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary ring-1 ring-primary/15"
               aria-hidden="true"
             >
               {initials(name)}
-            </div>
-            <div className="hidden leading-tight sm:flex sm:flex-col">
+            </span>
+            <span className="hidden text-left leading-tight sm:flex sm:flex-col">
               <span className="text-sm font-semibold text-gray-800">{name}</span>
               <span className="text-xs text-gray-500">{roleLabel}</span>
-            </div>
-          </div>
+            </span>
+          </Link>
         </div>
       </nav>
     </header>

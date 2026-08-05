@@ -105,6 +105,7 @@ export default function PortalLoginForm() {
 
         <button
           type="submit"
+          data-intent="login_submit"
           disabled={loading}
           className="btn-primary w-full py-2.5 disabled:opacity-60 disabled:cursor-not-allowed"
           aria-busy={loading}

@@ -112,6 +112,7 @@ export default function SlaSettingsForm() {
                   <button
                     type="button"
                     onClick={() => save(row)}
+                    data-intent="sla_save"
                     disabled={savingType === row.caseType}
                     className="text-sm font-medium px-3 py-1.5 rounded-lg bg-primary text-white hover:bg-primary/90 shadow-sm transition disabled:opacity-60"
                   >

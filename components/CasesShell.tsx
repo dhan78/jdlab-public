@@ -80,6 +80,7 @@ export default function CasesShell({ children }: { children: React.ReactNode }) 
         <button
           type="button"
           onClick={toggleRail}
+          data-intent="rail_toggle"
           title={railOpen ? 'Hide recently viewed' : 'Show recently viewed'}
           aria-label={railOpen ? 'Hide recently viewed' : 'Show recently viewed'}
           aria-expanded={railOpen}

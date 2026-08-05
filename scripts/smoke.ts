@@ -353,6 +353,19 @@ async function main() {
     const res = await http(`/api/portal/cases/${doctorCase.id}/annotations`, { method: 'POST', cookie: plannerCookie, body: { attachmentId: modelAttachmentId, x: 0, y: 0, z: 0, body: '   ' } })
     assert(res.status === 400, `expected 400, got ${res.status}`)
   })
+  await check('create a measurement (kind=measure, note optional) → 201 with both points', async () => {
+    const res = await http(`/api/portal/cases/${doctorCase.id}/annotations`, { method: 'POST', cookie: plannerCookie, body: { attachmentId: modelAttachmentId, kind: 'measure', x: 0, y: 0, z: 0, bx: 3, by: 4, bz: 0 } })
+    assert(res.status === 201, `status ${res.status}: ${res.text}`)
+    const a = res.json?.annotation
+    assert(a?.kind === 'measure', `expected kind measure, got ${a?.kind}`)
+    assert(a?.bx === 3 && a?.by === 4 && a?.bz === 0, 'measurement second point not persisted')
+    // cleanup
+    await http(`/api/portal/cases/${doctorCase.id}/annotations/${a.id}`, { method: 'DELETE', cookie: plannerCookie })
+  })
+  await check('measurement without a second point → 400', async () => {
+    const res = await http(`/api/portal/cases/${doctorCase.id}/annotations`, { method: 'POST', cookie: plannerCookie, body: { attachmentId: modelAttachmentId, kind: 'measure', x: 0, y: 0, z: 0 } })
+    assert(res.status === 400, `expected 400, got ${res.status}`)
+  })
   await check('pin without a surface point → 400', async () => {
     const res = await http(`/api/portal/cases/${doctorCase.id}/annotations`, { method: 'POST', cookie: plannerCookie, body: { attachmentId: modelAttachmentId, body: 'no point' } })
     assert(res.status === 400, `expected 400, got ${res.status}`)

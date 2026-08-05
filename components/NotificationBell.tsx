@@ -198,6 +198,7 @@ export default function NotificationBell() {
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
+        data-intent="notifications_toggle"
         className="relative p-2 rounded-lg text-slate-600 hover:text-primary hover:bg-slate-100 transition-colors"
         aria-label={unread > 0 ? `Notifications (${unread} unread)` : 'Notifications'}
         aria-haspopup="true"
@@ -222,12 +223,12 @@ export default function NotificationBell() {
               <span className="text-sm font-semibold text-slate-800">Notifications</span>
               <div className="flex items-center gap-3">
                 {unread > 0 && (
-                  <button type="button" onClick={markAllRead} className="text-xs text-primary hover:underline">
+                  <button type="button" onClick={markAllRead} data-intent="notifications_mark_all_read" className="text-xs text-primary hover:underline">
                     Mark all read
                   </button>
                 )}
                 {items.length > 0 && (
-                  <button type="button" onClick={clearAll} className="text-xs text-slate-500 hover:text-red-600 hover:underline">
+                  <button type="button" onClick={clearAll} data-intent="notifications_clear" className="text-xs text-slate-500 hover:text-red-600 hover:underline">
                     Clear all
                   </button>
                 )}
@@ -252,6 +253,7 @@ export default function NotificationBell() {
                     aria-checked={pushState === 'on'}
                     aria-label="Toggle push notifications on this device"
                     onClick={pushState === 'on' ? disablePush : enablePush}
+                    data-intent="push_toggle"
                     disabled={pushState === 'busy'}
                     className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 ${pushState === 'on' ? 'bg-emerald-500' : 'bg-slate-300'}`}
                   >
@@ -273,6 +275,7 @@ export default function NotificationBell() {
                     key={item.id}
                     type="button"
                     onClick={() => openItem(item)}
+                    data-intent="notification_open"
                     className={`w-full text-left px-4 py-3 border-b border-slate-50 hover:bg-slate-50 transition-colors ${item.read ? '' : 'bg-primary/5'}`}
                   >
                     <div className="flex items-start gap-2">
