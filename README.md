@@ -326,6 +326,11 @@ OUTLINE_DOCUMENT_ID=ZereHWBBc7             # parent doc urlId from /doc/<slug>-<
 # all default targets (app, components, lib, drizzle, scripts, tests, specs, deploy, test-fixtures + root config)
 npm run outline:publish
 
+# incremental: only republish folder-groups changed since the last publish
+# (baseline stored in .outline/last-published; the index tree is merged, then
+# the baseline advances to HEAD). Safe to re-run — a failed run doesn't advance.
+$env:NODE_USE_ENV_PROXY='1'; npm run outline:publish:changed
+
 # selective: pass paths after `--` (overrides defaults; folders walked recursively)
 npm run outline:publish -- app/api lib/db docker-compose.yml README.md
 ```

@@ -22,6 +22,7 @@ export type AuditAction =
   | 'sla.update'
   | 'password.reset_request'
   | 'password.reset_complete'
+  | 'demo.toggle'
 
 function toIntOrNull(v: string | number | null | undefined): number | null {
   if (v === null || v === undefined) return null

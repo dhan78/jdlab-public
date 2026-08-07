@@ -4,7 +4,7 @@ export default function Resources() {
       emoji: '📸',
       title: 'Upload Case Photos',
       description: 'Submit high-resolution images of your cases for our review',
-      href: '/upload',
+      href: '/portal',
       color: 'bg-cyan-50 hover:bg-cyan-100 border-cyan-200'
     },
     {
@@ -15,7 +15,7 @@ export default function Resources() {
       color: 'bg-cyan-50 hover:bg-cyan-100 border-cyan-200'
     },
     {
-      emoji: '�',
+      emoji: '💳',
       title: 'IOS Scanner Leasing',
       description: 'Digitize your workflow with our scanner leasing program—no capital expense',
       href: '/ios-leasing',
@@ -32,14 +32,14 @@ export default function Resources() {
       emoji: '🎓',
       title: 'Continuing Education Events',
       description: 'Webinars, workshops, and training sessions for dental professionals',
-      href: '/education',
+      href: '/#contact',
       color: 'bg-white hover:bg-gray-50 border-gray-200'
     },
     {
       emoji: '🤝',
       title: 'Lab to Lab Outsourcing',
       description: 'Partner with us for overflow work and specialized services',
-      href: '/outsourcing',
+      href: '/#contact',
       color: 'bg-white hover:bg-gray-50 border-gray-200'
     }
   ]

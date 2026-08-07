@@ -226,6 +226,16 @@ export const slaConfig = pgTable('sla_config', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+// Generic runtime key/value settings, admin-editable WITHOUT a redeploy. Used
+// as the live kill-switch + target for the public read-only demo case
+// (keys: 'demo.enabled', 'demo.caseId'). Kept intentionally tiny/opaque so it
+// can hold future runtime flags too.
+export const appSettings = pgTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
 // Per-user activity notifications (powers the header bell + web push). A row is
 // written for each recipient when a case changes (new message, status change).
 // Snapshots title/body so the bell renders without extra joins; caseId links

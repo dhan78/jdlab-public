@@ -94,6 +94,10 @@ export const INTENTS = {
   // --- Admin: SLA ---
   sla_save: 'Save an SLA turnaround row',
 
+  // --- Admin: public demo case ---
+  demo_case_save: 'Save the public demo case id',
+  demo_toggle: 'Turn the public demo on/off',
+
   // --- Admin: telemetry viewer ---
   telemetry_session_open: 'Open a telemetry session timeline',
   telemetry_copy_steps: 'Copy the session steps',

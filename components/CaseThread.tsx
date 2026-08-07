@@ -16,6 +16,7 @@ import { subscribeCaseEvents } from '@/lib/portal-stream'
 import { track } from '@/lib/telemetry'
 import dynamic from 'next/dynamic'
 import HtmlViewer from './HtmlViewer'
+import SleepyPuppy from './SleepyPuppy'
 
 // The 3D scan viewer is heavy + WebGL-only, so load it lazily and client-side
 // only, and render it just for attachments that are actually models (.stl/.ply).
@@ -393,6 +394,9 @@ export default function CaseThread({
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // A missing/forbidden case (404/403) is a calm, expected state — not an error.
+  // Tracked separately so we render a neutral panel and DON'T log it.
+  const [caseGone, setCaseGone] = useState(false)
 
   // Live clock so the SLA chip recomputes on its own as time passes.
   const [now, setNow] = useState(() => new Date())
@@ -522,8 +526,15 @@ export default function CaseThread({
   const fetchThread = useCallback(async () => {
     setLoading(true)
     setError('')
+    setCaseGone(false)
     try {
       const res = await fetch(`/api/portal/cases/${caseId}`)
+      // 404 (missing/deleted) and 403 (not yours) are expected, benign states —
+      // show a friendly panel, and do NOT report them as client errors.
+      if (res.status === 404 || res.status === 403) {
+        setCaseGone(true)
+        return
+      }
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
         throw new Error(data.error ?? 'Failed to load case')
@@ -879,6 +890,32 @@ export default function CaseThread({
   if (loading) {
     return (
       <p className="text-gray-500">Loading case…</p>
+    )
+  }
+
+  if (caseGone) {
+    return (
+      <div className="flex min-h-full items-center justify-center px-6 py-16">
+        <div className="w-full max-w-sm text-center">
+          <SleepyPuppy className="mx-auto h-32 w-32" />
+          <h1 className="mt-5 text-xl font-bold text-slate-900">
+            We couldn’t find that case
+          </h1>
+          <p className="mx-auto mt-2 max-w-xs text-sm text-slate-600">
+            It may have been moved, or the link isn’t quite right. Pick a case
+            from your list to jump back in.
+          </p>
+          <Link
+            href="/portal"
+            className="mt-6 inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary/90"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <path d="M12 5l-5 5 5 5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Back to cases
+          </Link>
+        </div>
+      </div>
     )
   }
 

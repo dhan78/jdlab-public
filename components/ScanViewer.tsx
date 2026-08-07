@@ -25,6 +25,7 @@ import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
 import { NeutralToneMapping, Vector3 } from 'three'
 import type { BufferGeometry, Group } from 'three'
+import { scanCacheKey, getScanBytes, putScanBytes } from '@/lib/scan-cache'
 
 // A 3D surface pin the doctor or lab drops on the scan. Coordinates are in the
 // centered-geometry local space (see the store), so they re-anchor on reload.
@@ -65,6 +66,10 @@ interface ScanViewerProps {
   }) => void | Promise<void>
   /** Delete a pin by id (only offered on pins the caller marked `canDelete`). */
   onDeleteAnnotation?: (id: string) => void | Promise<void>
+  /** View-only mode: render the model + existing pins/measurements but hide ALL
+   *  authoring controls (used by the public /demo surface). Belt-and-suspenders
+   *  on top of simply not passing the create/delete callbacks. */
+  readOnly?: boolean
 }
 
 // Parse an STL or PLY ArrayBuffer into a centered, normalized geometry. The
@@ -108,6 +113,38 @@ function parseGlb(buffer: ArrayBuffer): Promise<GLTF> {
     () => undefined,
   )
   return result
+}
+
+// In-memory PARSED cache: skip the Meshopt/STL decode on remounts and tab-hops
+// within a session. Keyed by the stable S3 object path (query stripped). We keep
+// a pristine MASTER and hand each mount a clone, so concurrent viewers (a tiled
+// preview + the maximized overlay of the same scan) never share one scene graph.
+// Clones share the underlying (read-only) geometry/material, so a clone is cheap
+// relative to a full decode. LRU-bounded to cap decoded-mesh memory on mobile.
+type ParsedScan =
+  | { kind: 'glb'; scene: Group }
+  | { kind: 'mesh'; geometry: BufferGeometry }
+
+const MAX_PARSED = 8 // ~ one full case's worth of scans
+const parsedCache = new Map<string, ParsedScan>()
+
+function parsedGet(key: string): ParsedScan | undefined {
+  const p = parsedCache.get(key)
+  if (p) {
+    parsedCache.delete(key)
+    parsedCache.set(key, p) // bump to most-recently-used
+  }
+  return p
+}
+
+function parsedPut(key: string, p: ParsedScan): void {
+  if (parsedCache.has(key)) parsedCache.delete(key)
+  parsedCache.set(key, p)
+  while (parsedCache.size > MAX_PARSED) {
+    const oldest = parsedCache.keys().next().value as string | undefined
+    if (oldest === undefined) break
+    parsedCache.delete(oldest)
+  }
 }
 
 // A draft pin position awaiting a note (before it's saved).
@@ -604,6 +641,7 @@ export default function ScanViewer({
   annotations,
   onCreateAnnotation,
   onDeleteAnnotation,
+  readOnly = false,
 }: ScanViewerProps) {
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null)
   const [scene, setScene] = useState<Group | null>(null)
@@ -620,7 +658,9 @@ export default function ScanViewer({
   const [pendingPoint, setPendingPoint] = useState<Vector3 | null>(null)
   const [pendingMeasure, setPendingMeasure] = useState<{ a: Vector3; b: Vector3 } | null>(null)
   const pins = annotations ?? []
-  const canAnnotate = !!onCreateAnnotation
+  // Any authoring (pins AND the measure tool, which persists via onCreateAnnotation)
+  // requires a create callback and a non-read-only viewer.
+  const canAnnotate = !!onCreateAnnotation && !readOnly
   // Keep the latest onError without making it an effect dep (it's an inline
   // callback that changes every render — putting it in deps would refetch).
   const onErrorRef = useRef(onError)
@@ -645,16 +685,44 @@ export default function ScanViewer({
     setLoading(true)
     const run = async () => {
       try {
+        // Scans are served via presigned S3 URLs whose signature rotates each
+        // load, so the browser HTTP cache never hits. Cache by the STABLE object
+        // path (query stripped): parsed-scene cache → byte cache → network.
+        const key = url && !file ? scanCacheKey(url) : null
+
+        // Tier 0: already-parsed in this session → clone and show instantly
+        // (skips both the network AND the Meshopt/STL decode).
+        if (key) {
+          const parsed = parsedGet(key)
+          if (parsed) {
+            if (cancelled) return
+            if (parsed.kind === 'glb') setScene(parsed.scene.clone(true) as Group)
+            else setGeometry(parsed.geometry.clone())
+            setLoading(false)
+            onLoadRef.current?.()
+            return
+          }
+        }
+
         let buffer: ArrayBuffer
         if (file) {
           buffer = await file.arrayBuffer()
         } else {
-          // Distinguish a blocked/denied S3 GET (CORS/403) from a bad file: a
-          // failed fetch throws, a non-2xx gives a clear `fetch <status>`.
-          const res = await fetch(url!)
-          if (!res.ok) throw new Error(`fetch ${res.status}`)
-          buffer = await res.arrayBuffer()
+          // Tier 1/2: cached bytes (memory → Cache Storage), else fetch from S3.
+          const cachedBytes = key ? await getScanBytes(key) : null
+          if (cachedBytes) {
+            buffer = cachedBytes
+          } else {
+            // Distinguish a blocked/denied S3 GET (CORS/403) from a bad file: a
+            // failed fetch throws, a non-2xx gives a clear `fetch <status>`.
+            const res = await fetch(url!)
+            if (!res.ok) throw new Error(`fetch ${res.status}`)
+            buffer = await res.arrayBuffer()
+            // Persist for future revisits (best-effort; never blocks render).
+            if (key) void putScanBytes(key, buffer)
+          }
         }
+        if (cancelled) return
         // Sniff the GLB binary magic ("glTF" = 0x67 0x6C 0x54 0x46). GLBs render
         // via GLTFLoader with materials preserved; STL/PLY keep their own path.
         const magic = new Uint8Array(buffer, 0, Math.min(4, buffer.byteLength))
@@ -664,7 +732,9 @@ export default function ScanViewer({
           try {
             const gltf = await parseGlb(buffer)
             if (cancelled) return
-            setScene(gltf.scene)
+            // Cache the pristine master; display a clone (see parsedCache note).
+            if (key) parsedPut(key, { kind: 'glb', scene: gltf.scene })
+            setScene(gltf.scene.clone(true) as Group)
             setLoading(false)
             onLoadRef.current?.()
           } catch (err) {
@@ -677,7 +747,8 @@ export default function ScanViewer({
         }
         const geo = prepare(buffer)
         if (!cancelled) {
-          setGeometry(geo)
+          if (key) parsedPut(key, { kind: 'mesh', geometry: geo })
+          setGeometry(geo.clone())
           setLoading(false)
           onLoadRef.current?.()
         }
@@ -829,7 +900,7 @@ export default function ScanViewer({
               Cancel
             </button>
           )}
-          {scene && (
+          {scene && canAnnotate && (
             <button
               type="button"
               data-intent="measure_toggle"
@@ -847,7 +918,7 @@ export default function ScanViewer({
               {measureMode ? (pendingMeasure ? 'Add note & save' : pendingPoint ? 'Click 2nd point' : 'Click a point') : '↔ Measure'}
             </button>
           )}
-          {scene && (pendingPoint || pendingMeasure) && (
+          {scene && canAnnotate && (pendingPoint || pendingMeasure) && (
             <button
               type="button"
               data-intent="measure_clear"

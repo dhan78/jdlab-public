@@ -16,6 +16,7 @@ import {
   type CaseType,
 } from '@/lib/case-meta'
 import { computeSla, SLA_CHIP, computeSurgeryReadiness, READINESS_CHIP, type SlaConfigMap } from '@/lib/sla'
+import { caseMatchesView, scopeForOpenCase, searchHidesCase } from '@/lib/case-list-scope'
 
 interface CaseRow {
   id: string
@@ -259,6 +260,9 @@ export default function CaseList() {
   // Keyboard niceties: '/' focuses search; j/k move the highlighted row; Enter opens it.
   const searchRef = useRef<HTMLInputElement>(null)
   const [focusIdx, setFocusIdx] = useState(-1)
+  // The sticky search/filter toolbar. Measured so scroll-into-view can offset
+  // the target row below it (see scrollRowIntoView).
+  const stickyHeaderRef = useRef<HTMLDivElement>(null)
 
   // Filter / search / sort (work queue)
   const [query, setQuery] = useState('')
@@ -546,18 +550,7 @@ export default function CaseList() {
   if (unreadOnly) appliedFilters.push('Unread')
   if (q) appliedFilters.push(`“${query.trim()}”`)
   const visibleCases = cases
-    .filter(c =>
-      scope === 'all' ? true : scope === 'shipped' ? c.status === 'shipped' : c.status !== 'shipped'
-    )
-    .filter(c => !rushOnly || c.isRush)
-    .filter(c => !unreadOnly || (c.unreadCount ?? 0) > 0)
-    .filter(
-        c =>
-          !q ||
-          [c.patientName, c.toothRef, c.title, c.caseNumber, c.doctorName, c.material].some(v =>
-            v?.toLowerCase().includes(q)
-          )
-      )
+    .filter(c => caseMatchesView(c, scope, { rushOnly, unreadOnly, q: query }))
     .slice()
     .sort((a, b) => {
       // Shipped archive: newest surgery date first (cases without a date sink to the bottom).
@@ -581,6 +574,9 @@ export default function CaseList() {
   const totalPages = Math.max(1, Math.ceil(visibleCases.length / pageSize))
   const currentPage = Math.min(page, totalPages)
   const pagedCases = visibleCases.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+
+  // Position of the open case within the current page (for scroll-into-view).
+  const activeRowIndex = activeCaseId ? pagedCases.findIndex(c => c.id === activeCaseId) : -1
 
   // Global keyboard shortcuts for the list. '/' jumps to search from anywhere;
   // j/k walk the highlighted row and Enter opens it (Gmail-style). Arrow keys are
@@ -621,10 +617,61 @@ export default function CaseList() {
   useEffect(() => {
     setFocusIdx(i => (i >= pagedCases.length ? pagedCases.length - 1 : i))
   }, [pagedCases.length])
+
+  // Scroll a row into view WITHOUT letting it hide under the sticky toolbar.
+  // Plain scrollIntoView counts a row as "visible" whenever it's inside the
+  // scrollport (top = 0), even though the sticky search/filter bar overlays the
+  // top — so an aligned row lands *behind* the bar. Offsetting by the bar's live
+  // height via scroll-margin-top makes the row settle just BELOW it. `nearest`
+  // keeps it a no-op once the row is properly clear, so it never yanks the view.
+  const scrollRowIntoView = useCallback((index: number) => {
+    const row = document.getElementById(`case-row-${index}`)
+    if (!row) return
+    const barH = stickyHeaderRef.current?.getBoundingClientRect().height ?? 0
+    row.style.scrollMarginTop = `${Math.round(barH) + 8}px`
+    row.scrollIntoView({ block: 'nearest' })
+  }, [])
+
   useEffect(() => {
     if (focusIdx < 0) return
-    document.getElementById(`case-row-${focusIdx}`)?.scrollIntoView({ block: 'nearest' })
-  }, [focusIdx])
+    scrollRowIntoView(focusIdx)
+  }, [focusIdx, scrollRowIntoView])
+
+  // Bring the open case's row into view when it's on the current page but
+  // scrolled off-screen (e.g. deep in the queue, opened from the Recently-viewed
+  // / Pinned rail or search). `block: 'nearest'` makes it a no-op when the row is
+  // already visible, so it never yanks the viewport away from the user.
+  useEffect(() => {
+    if (activeRowIndex < 0) return
+    scrollRowIntoView(activeRowIndex)
+  }, [activeCaseId, activeRowIndex, currentPage, scrollRowIntoView])
+
+  // Follow the selection: when the user opens a case the current filters would
+  // hide, re-sync the list so it always shows and highlights the open case.
+  //  • Scope: switch to the bucket that contains it (e.g. a shipped case opened
+  //    from the rail while on Active), via scopeForOpenCase.
+  //  • Search: if the case is hidden *solely* by the search box (a cross-surface
+  //    open — Recently-viewed / Pinned rail, or a direct URL — that doesn't match
+  //    the current query), clear the search to "reveal" it. Clicking a case
+  //    that's already visible matches the query, so the search is left intact —
+  //    this only fires on navigation from another surface, never while typing.
+  // Keyed on the SELECTED case only (guarded by a ref), so a manual scope-tab
+  // click or search edit for the same open case is respected, not overridden.
+  const alignedCaseRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!activeCaseId) {
+      alignedCaseRef.current = null
+      return
+    }
+    if (alignedCaseRef.current === activeCaseId) return
+    const oc = cases.find(c => c.id === activeCaseId)
+    if (!oc) return // case list not loaded yet — re-run when it arrives
+    alignedCaseRef.current = activeCaseId
+    setScope(prev => scopeForOpenCase(oc.status, prev))
+    if (searchHidesCase(oc, { rushOnly, unreadOnly, q: query })) {
+      setQuery('')
+    }
+  }, [activeCaseId, cases, query, rushOnly, unreadOnly])
 
   // Telemetry: record searches (length only — never the term, which may be a
   // patient name) once the user pauses typing.
@@ -657,7 +704,7 @@ export default function CaseList() {
   return (
     <div>
             {/* Sticky toolbar: title, scope/sort, and search/filters stay pinned while scrolling */}
-            <div className={`sticky top-16 lg:top-0 z-30 -mx-4 px-4 mb-3 bg-slate-50/90 backdrop-blur supports-[backdrop-filter]:bg-slate-50/75 transition-all duration-200 ${condensed ? 'py-2 shadow-sm border-b border-slate-200' : 'pt-0 pb-2'}`}>
+            <div ref={stickyHeaderRef} className={`sticky top-16 lg:top-0 z-30 -mx-4 px-4 mb-3 bg-slate-50/90 backdrop-blur supports-[backdrop-filter]:bg-slate-50/75 transition-all duration-200 ${condensed ? 'py-2 shadow-sm border-b border-slate-200' : 'pt-0 pb-2'}`}>
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 {/* Kept for accessibility + document outline (role context:
                     "My Cases" vs "Work Queue"); the visible label below mirrors it. */}
@@ -667,7 +714,7 @@ export default function CaseList() {
                 <span className="text-xs tabular-nums" aria-hidden="true">
                   <span className="font-medium text-slate-500">{heading}</span>
                   {!loading && !error && cases.length > 0 && (
-                    <span className="text-slate-400"> · {visibleCases.length} of {cases.length}{appliedFilters.length > 0 ? <> · {appliedFilters.join(' · ')}</> : ''} · <span className="text-slate-500">by {sortLabel}</span></span>
+                    <span className="text-slate-400"> · {visibleCases.length} of {cases.length}{appliedFilters.length > 0 ? <> · {appliedFilters.join(' · ')}</> : ''}{query.trim() && scope !== 'all' ? <> · <span className="text-primary">all statuses</span></> : ''} · <span className="text-slate-500">by {sortLabel}</span></span>
                   )}
                 </span>
                 {isDoctor && (
