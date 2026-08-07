@@ -26,6 +26,7 @@ export default function LogoutButton() {
     <button
       type="button"
       onClick={handleLogout}
+      data-intent="logout"
       disabled={busy}
       className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200 disabled:opacity-50"
       aria-label="Sign out of the portal"

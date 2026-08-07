@@ -109,42 +109,12 @@ services:
       - app
       - outline
 
-  # --- Daily Postgres backup -> S3 (uses the instance role via IMDS) ---
-  db-backup:
-    image: postgres:18-alpine
-    container_name: postgres-backup
-    restart: unless-stopped
-    env_file: [/run/jdlab/db.env]          # POSTGRES_USER/PASSWORD + S3_BUCKET_URL from SSM
-    environment:
-      - AWS_REGION=us-east-1
-    volumes:
-      - ./backups:/backups:z
-    depends_on:
-      db: { condition: service_healthy }
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        command -v aws >/dev/null 2>&1 || apk add --no-cache aws-cli >/dev/null
-        export PGPASSWORD="$${POSTGRES_PASSWORD}"
-        echo "=== backup loop started ==="
-        while true; do
-          DATE=$$(date +%Y-%m-%d_%H-%M-%S)
-          FILE="/backups/full_backup-$${DATE}.sql.gz"
-          echo "[$$(date)] dumping from postgres-prostore..."
-          if pg_dumpall -h postgres-prostore -U "$${POSTGRES_USER:-postgres}" --clean --if-exists | gzip > "$$FILE"; then
-            echo "OK dump $$(du -h "$$FILE" | cut -f1)"
-            if [ -n "$${S3_BUCKET_URL}" ] && aws s3 cp "$$FILE" "$${S3_BUCKET_URL%/}/"; then
-              echo "OK uploaded to S3"
-            else
-              echo "WARN S3 upload skipped/failed"
-            fi
-          else
-            echo "ERR dump failed"; rm -f "$$FILE"
-          fi
-          find /backups -name 'full_backup-*.sql.gz' -mtime +7 -delete
-          sleep 86400
-        done
+# Postgres backups run on the HOST via cron, not a container — see
+# ./jdlab-backup.sh (docker exec pg_dumpall -> gzip -> S3). Keeps the micro
+# instance lean (no extra always-on container) and the dump client version
+# always matches the live db container.
+#   sudo install -m 0755 ./jdlab-backup.sh /opt/jdlab/jdlab-backup.sh
+#   crontab:  15 3 * * *  /opt/jdlab/jdlab-backup.sh >> /var/log/jdlab-backup.log 2>&1
 
 volumes:
   postgres_data:

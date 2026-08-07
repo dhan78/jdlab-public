@@ -76,6 +76,7 @@ export default function MobileRecentDrawer() {
         ref={triggerRef}
         type="button"
         onClick={() => setOpen(true)}
+        data-intent="recent_drawer_open"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls="mobile-recent-drawer"
@@ -118,6 +119,7 @@ export default function MobileRecentDrawer() {
             type="button"
             aria-label="Close recently viewed"
             onClick={() => setOpen(false)}
+            data-intent="recent_drawer_close"
             className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px]"
           />
 
@@ -135,6 +137,7 @@ export default function MobileRecentDrawer() {
               <button
                 type="button"
                 onClick={() => setOpen(false)}
+                data-intent="recent_drawer_close"
                 aria-label="Close"
                 className="p-1.5 -mr-1.5 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors"
               >

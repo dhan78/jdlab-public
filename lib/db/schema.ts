@@ -133,6 +133,12 @@ export const caseAnnotations = pgTable(
     x: doublePrecision('x').notNull(),
     y: doublePrecision('y').notNull(),
     z: doublePrecision('z').notNull(),
+    // A measurement ('measure') stores a second point (bx,by,bz); a pin ('pin')
+    // leaves them null. The distance is derived from the two points at render.
+    kind: text('kind').notNull().default('pin'),
+    bx: doublePrecision('bx'),
+    by: doublePrecision('by'),
+    bz: doublePrecision('bz'),
     body: text('body').notNull().default(''),
     authorId: integer('author_id').references(() => users.id, { onDelete: 'set null' }),
     authorName: text('author_name').notNull(),
@@ -217,6 +223,16 @@ export const slaConfig = pgTable('sla_config', {
   caseType: text('case_type').primaryKey(), // matches CaseType
   standardDays: integer('standard_days').notNull(),
   rushDays: integer('rush_days').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// Generic runtime key/value settings, admin-editable WITHOUT a redeploy. Used
+// as the live kill-switch + target for the public read-only demo case
+// (keys: 'demo.enabled', 'demo.caseId'). Kept intentionally tiny/opaque so it
+// can hold future runtime flags too.
+export const appSettings = pgTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 

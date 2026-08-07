@@ -42,7 +42,7 @@ const MAX_BYTES = 256 * 1024 // skip files larger than this
 // Default roots walked when nothing is passed on the CLI.
 const DEFAULT_TARGETS = [
   'app', 'components', 'lib', 'drizzle', 'scripts', 'tests', 'specs',
-  'deploy', 'test-fixtures',
+  'deploy', 'test-fixtures', 'lambda',
   'middleware.ts', 'next.config.ts', 'tailwind.config.ts', 'postcss.config.js',
   'drizzle.config.ts', 'tsconfig.json', 'package.json', 'eslint.config.mjs',
   'docker-compose.yml', 'Dockerfile', 'Caddyfile', 'README.md', 'HANDOFF.md',

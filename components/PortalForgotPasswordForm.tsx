@@ -85,6 +85,7 @@ export default function PortalForgotPasswordForm() {
 
       <button
         type="submit"
+        data-intent="forgot_password_submit"
         disabled={loading}
         className="btn-primary w-full py-2.5 disabled:opacity-60 disabled:cursor-not-allowed"
         aria-busy={loading}

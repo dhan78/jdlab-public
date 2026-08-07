@@ -17,7 +17,7 @@ export default function DigitalScansPage() {
           title: 'Option 1',
           steps: [
             'Select "Find a Laboratory" on your iTero scanner',
-            'Connect with JD Dental Lab using our Lab ID: 63166',
+            'Connect with JD Dental Lab using our Lab ID: 663166',
             'After connecting to us as a Lab, select "JD Dental Lab" on your scanner when sending files'
           ]
         },

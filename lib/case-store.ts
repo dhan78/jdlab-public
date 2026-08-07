@@ -478,9 +478,13 @@ export async function isCasePinned(userId: string, caseId: string): Promise<bool
 export interface CaseAnnotation {
   id: string
   attachmentId: string
+  kind: string // 'pin' | 'measure'
   x: number
   y: number
   z: number
+  bx: number | null
+  by: number | null
+  bz: number | null
   body: string
   authorId: string | null
   authorName: string
@@ -492,9 +496,13 @@ function mapAnnotation(r: typeof caseAnnotations.$inferSelect): CaseAnnotation {
   return {
     id: String(r.id),
     attachmentId: String(r.attachmentId),
+    kind: r.kind,
     x: r.x,
     y: r.y,
     z: r.z,
+    bx: r.bx,
+    by: r.by,
+    bz: r.bz,
     body: r.body,
     authorId: r.authorId != null ? String(r.authorId) : null,
     authorName: r.authorName,
@@ -523,9 +531,13 @@ export async function createCaseAnnotation(
   caseId: string,
   input: {
     attachmentId: string
+    kind?: string
     x: number
     y: number
     z: number
+    bx?: number | null
+    by?: number | null
+    bz?: number | null
     body: string
     authorId: string | null
     authorName: string
@@ -548,9 +560,13 @@ export async function createCaseAnnotation(
     .values({
       caseId: cid,
       attachmentId: aid,
+      kind: input.kind === 'measure' ? 'measure' : 'pin',
       x: input.x,
       y: input.y,
       z: input.z,
+      bx: input.bx ?? null,
+      by: input.by ?? null,
+      bz: input.bz ?? null,
       body: input.body.slice(0, 500),
       authorId: uid >= 0 ? uid : null,
       authorName: input.authorName,

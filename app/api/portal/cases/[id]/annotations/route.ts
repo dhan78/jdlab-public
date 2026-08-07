@@ -69,7 +69,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     )
   }
 
-  let body: { attachmentId?: unknown; x?: unknown; y?: unknown; z?: unknown; body?: unknown }
+  let body: { attachmentId?: unknown; kind?: unknown; x?: unknown; y?: unknown; z?: unknown; bx?: unknown; by?: unknown; bz?: unknown; body?: unknown }
   try {
     body = await request.json()
   } catch {
@@ -77,23 +77,36 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   const attachmentId = typeof body.attachmentId === 'string' ? body.attachmentId : ''
+  const kind = body.kind === 'measure' ? 'measure' : 'pin'
   const x = typeof body.x === 'number' ? body.x : NaN
   const y = typeof body.y === 'number' ? body.y : NaN
   const z = typeof body.z === 'number' ? body.z : NaN
+  const bx = typeof body.bx === 'number' ? body.bx : null
+  const by = typeof body.by === 'number' ? body.by : null
+  const bz = typeof body.bz === 'number' ? body.bz : null
   const note = typeof body.body === 'string' ? body.body.trim() : ''
 
   if (!attachmentId || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
     return NextResponse.json({ error: 'A point on the model is required' }, { status: 400 })
   }
-  if (!note) {
+  // A measurement needs its second point; the note is optional for it.
+  if (kind === 'measure') {
+    if (!Number.isFinite(bx) || !Number.isFinite(by) || !Number.isFinite(bz)) {
+      return NextResponse.json({ error: 'A measurement needs two points' }, { status: 400 })
+    }
+  } else if (!note) {
     return NextResponse.json({ error: 'A note is required' }, { status: 400 })
   }
 
   const created = await createCaseAnnotation(r.id, {
     attachmentId,
+    kind,
     x,
     y,
     z,
+    bx,
+    by,
+    bz,
     body: note,
     authorId: r.session.sub,
     authorName: r.session.name,

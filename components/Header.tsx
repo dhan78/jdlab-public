@@ -4,6 +4,39 @@ import Link from 'next/link'
 import { useState } from 'react'
 import Logo from './Logo'
 
+// In-page section link. Next's App Router <Link> does NOT reliably scroll when
+// only the hash changes on the SAME page (e.g. /#contact -> /#resources), which
+// leaves the nav "stuck". This intercepts the click: if the target section
+// exists on the current page, smooth-scroll to it; otherwise fall back to
+// normal navigation (jumping to the homepage section from another route).
+function SectionLink({
+  href,
+  className,
+  children,
+  onNavigate,
+}: {
+  href: string
+  className?: string
+  children: React.ReactNode
+  onNavigate?: () => void
+}) {
+  const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    const id = href.split('#')[1]
+    const el = id ? document.getElementById(id) : null
+    if (el) {
+      e.preventDefault()
+      el.scrollIntoView({ behavior: 'smooth' })
+      window.history.replaceState(null, '', href)
+    }
+    onNavigate?.()
+  }
+  return (
+    <Link href={href} className={className} onClick={handleClick}>
+      {children}
+    </Link>
+  )
+}
+
 export default function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
@@ -17,24 +50,24 @@ export default function Header() {
 
         {/* Desktop Menu */}
         <div className="hidden md:flex items-center gap-8">
-          <Link href="/#services" className="hover:text-primary transition">
+          <SectionLink href="/#services" className="hover:text-primary transition">
             Services
-          </Link>
-          <Link href="/#automation" className="hover:text-primary transition">
+          </SectionLink>
+          <SectionLink href="/#automation" className="hover:text-primary transition">
             Automation
-          </Link>
-          <Link href="/#global" className="hover:text-primary transition">
+          </SectionLink>
+          <SectionLink href="/#global" className="hover:text-primary transition">
             Global Reach
-          </Link>
-          <Link href="/#portal" className="hover:text-primary transition">
+          </SectionLink>
+          <SectionLink href="/#portal" className="hover:text-primary transition">
             Portal
-          </Link>
-          <Link href="/#resources" className="hover:text-primary transition">
+          </SectionLink>
+          <SectionLink href="/#resources" className="hover:text-primary transition">
             Resources
-          </Link>
-          <Link href="/#contact" className="btn-primary">
+          </SectionLink>
+          <SectionLink href="/#contact" className="btn-primary">
             Get Started
-          </Link>
+          </SectionLink>
           <Link
             href="/portal/login"
             className="flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-primary border border-gray-300 hover:border-primary rounded-lg px-3 py-1.5 transition-colors"
@@ -72,44 +105,48 @@ export default function Header() {
       {mobileMenuOpen && (
         <div className="md:hidden bg-white/90 backdrop-blur-md border-t border-gray-200 px-4 py-4">
           <div className="flex flex-col gap-4">
-            <Link
+            <SectionLink
               href="/#services"
               className="text-dark hover:text-primary transition"
-              onClick={() => setMobileMenuOpen(false)}
+              onNavigate={() => setMobileMenuOpen(false)}
             >
               Services
-            </Link>
-            <Link
+            </SectionLink>
+            <SectionLink
               href="/#automation"
               className="text-dark hover:text-primary transition"
-              onClick={() => setMobileMenuOpen(false)}
+              onNavigate={() => setMobileMenuOpen(false)}
             >
               Automation
-            </Link>
-            <Link
+            </SectionLink>
+            <SectionLink
               href="/#global"
               className="text-dark hover:text-primary transition"
-              onClick={() => setMobileMenuOpen(false)}
+              onNavigate={() => setMobileMenuOpen(false)}
             >
               Global Reach
-            </Link>
-            <Link
+            </SectionLink>
+            <SectionLink
               href="/#portal"
               className="text-dark hover:text-primary transition"
-              onClick={() => setMobileMenuOpen(false)}
+              onNavigate={() => setMobileMenuOpen(false)}
             >
               Portal
-            </Link>
-            <Link
+            </SectionLink>
+            <SectionLink
               href="/#resources"
               className="text-dark hover:text-primary transition"
-              onClick={() => setMobileMenuOpen(false)}
+              onNavigate={() => setMobileMenuOpen(false)}
             >
               Resources
-            </Link>
-            <Link href="/#contact" className="btn-primary justify-center">
+            </SectionLink>
+            <SectionLink
+              href="/#contact"
+              className="btn-primary justify-center"
+              onNavigate={() => setMobileMenuOpen(false)}
+            >
               Get Started
-            </Link>
+            </SectionLink>
             <Link
               href="/portal/login"
               className="flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-primary border border-gray-300 hover:border-primary rounded-lg px-4 py-2 transition-colors"

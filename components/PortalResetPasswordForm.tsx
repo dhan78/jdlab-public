@@ -123,6 +123,7 @@ export default function PortalResetPasswordForm() {
 
       <button
         type="submit"
+        data-intent="reset_password_submit"
         disabled={loading || !token}
         className="btn-primary w-full py-2.5 disabled:opacity-60 disabled:cursor-not-allowed"
         aria-busy={loading}

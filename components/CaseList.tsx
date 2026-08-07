@@ -16,6 +16,7 @@ import {
   type CaseType,
 } from '@/lib/case-meta'
 import { computeSla, SLA_CHIP, computeSurgeryReadiness, READINESS_CHIP, type SlaConfigMap } from '@/lib/sla'
+import { caseMatchesView, scopeForOpenCase, searchHidesCase } from '@/lib/case-list-scope'
 
 interface CaseRow {
   id: string
@@ -259,6 +260,9 @@ export default function CaseList() {
   // Keyboard niceties: '/' focuses search; j/k move the highlighted row; Enter opens it.
   const searchRef = useRef<HTMLInputElement>(null)
   const [focusIdx, setFocusIdx] = useState(-1)
+  // The sticky search/filter toolbar. Measured so scroll-into-view can offset
+  // the target row below it (see scrollRowIntoView).
+  const stickyHeaderRef = useRef<HTMLDivElement>(null)
 
   // Filter / search / sort (work queue)
   const [query, setQuery] = useState('')
@@ -546,18 +550,7 @@ export default function CaseList() {
   if (unreadOnly) appliedFilters.push('Unread')
   if (q) appliedFilters.push(`“${query.trim()}”`)
   const visibleCases = cases
-    .filter(c =>
-      scope === 'all' ? true : scope === 'shipped' ? c.status === 'shipped' : c.status !== 'shipped'
-    )
-    .filter(c => !rushOnly || c.isRush)
-    .filter(c => !unreadOnly || (c.unreadCount ?? 0) > 0)
-    .filter(
-        c =>
-          !q ||
-          [c.patientName, c.toothRef, c.title, c.caseNumber, c.doctorName, c.material].some(v =>
-            v?.toLowerCase().includes(q)
-          )
-      )
+    .filter(c => caseMatchesView(c, scope, { rushOnly, unreadOnly, q: query }))
     .slice()
     .sort((a, b) => {
       // Shipped archive: newest surgery date first (cases without a date sink to the bottom).
@@ -581,6 +574,9 @@ export default function CaseList() {
   const totalPages = Math.max(1, Math.ceil(visibleCases.length / pageSize))
   const currentPage = Math.min(page, totalPages)
   const pagedCases = visibleCases.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+
+  // Position of the open case within the current page (for scroll-into-view).
+  const activeRowIndex = activeCaseId ? pagedCases.findIndex(c => c.id === activeCaseId) : -1
 
   // Global keyboard shortcuts for the list. '/' jumps to search from anywhere;
   // j/k walk the highlighted row and Enter opens it (Gmail-style). Arrow keys are
@@ -621,10 +617,61 @@ export default function CaseList() {
   useEffect(() => {
     setFocusIdx(i => (i >= pagedCases.length ? pagedCases.length - 1 : i))
   }, [pagedCases.length])
+
+  // Scroll a row into view WITHOUT letting it hide under the sticky toolbar.
+  // Plain scrollIntoView counts a row as "visible" whenever it's inside the
+  // scrollport (top = 0), even though the sticky search/filter bar overlays the
+  // top — so an aligned row lands *behind* the bar. Offsetting by the bar's live
+  // height via scroll-margin-top makes the row settle just BELOW it. `nearest`
+  // keeps it a no-op once the row is properly clear, so it never yanks the view.
+  const scrollRowIntoView = useCallback((index: number) => {
+    const row = document.getElementById(`case-row-${index}`)
+    if (!row) return
+    const barH = stickyHeaderRef.current?.getBoundingClientRect().height ?? 0
+    row.style.scrollMarginTop = `${Math.round(barH) + 8}px`
+    row.scrollIntoView({ block: 'nearest' })
+  }, [])
+
   useEffect(() => {
     if (focusIdx < 0) return
-    document.getElementById(`case-row-${focusIdx}`)?.scrollIntoView({ block: 'nearest' })
-  }, [focusIdx])
+    scrollRowIntoView(focusIdx)
+  }, [focusIdx, scrollRowIntoView])
+
+  // Bring the open case's row into view when it's on the current page but
+  // scrolled off-screen (e.g. deep in the queue, opened from the Recently-viewed
+  // / Pinned rail or search). `block: 'nearest'` makes it a no-op when the row is
+  // already visible, so it never yanks the viewport away from the user.
+  useEffect(() => {
+    if (activeRowIndex < 0) return
+    scrollRowIntoView(activeRowIndex)
+  }, [activeCaseId, activeRowIndex, currentPage, scrollRowIntoView])
+
+  // Follow the selection: when the user opens a case the current filters would
+  // hide, re-sync the list so it always shows and highlights the open case.
+  //  • Scope: switch to the bucket that contains it (e.g. a shipped case opened
+  //    from the rail while on Active), via scopeForOpenCase.
+  //  • Search: if the case is hidden *solely* by the search box (a cross-surface
+  //    open — Recently-viewed / Pinned rail, or a direct URL — that doesn't match
+  //    the current query), clear the search to "reveal" it. Clicking a case
+  //    that's already visible matches the query, so the search is left intact —
+  //    this only fires on navigation from another surface, never while typing.
+  // Keyed on the SELECTED case only (guarded by a ref), so a manual scope-tab
+  // click or search edit for the same open case is respected, not overridden.
+  const alignedCaseRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!activeCaseId) {
+      alignedCaseRef.current = null
+      return
+    }
+    if (alignedCaseRef.current === activeCaseId) return
+    const oc = cases.find(c => c.id === activeCaseId)
+    if (!oc) return // case list not loaded yet — re-run when it arrives
+    alignedCaseRef.current = activeCaseId
+    setScope(prev => scopeForOpenCase(oc.status, prev))
+    if (searchHidesCase(oc, { rushOnly, unreadOnly, q: query })) {
+      setQuery('')
+    }
+  }, [activeCaseId, cases, query, rushOnly, unreadOnly])
 
   // Telemetry: record searches (length only — never the term, which may be a
   // patient name) once the user pauses typing.
@@ -657,7 +704,7 @@ export default function CaseList() {
   return (
     <div>
             {/* Sticky toolbar: title, scope/sort, and search/filters stay pinned while scrolling */}
-            <div className={`sticky top-16 lg:top-0 z-30 -mx-4 px-4 mb-3 bg-slate-50/90 backdrop-blur supports-[backdrop-filter]:bg-slate-50/75 transition-all duration-200 ${condensed ? 'py-2 shadow-sm border-b border-slate-200' : 'pt-0 pb-2'}`}>
+            <div ref={stickyHeaderRef} className={`sticky top-16 lg:top-0 z-30 -mx-4 px-4 mb-3 bg-slate-50/90 backdrop-blur supports-[backdrop-filter]:bg-slate-50/75 transition-all duration-200 ${condensed ? 'py-2 shadow-sm border-b border-slate-200' : 'pt-0 pb-2'}`}>
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 {/* Kept for accessibility + document outline (role context:
                     "My Cases" vs "Work Queue"); the visible label below mirrors it. */}
@@ -667,12 +714,13 @@ export default function CaseList() {
                 <span className="text-xs tabular-nums" aria-hidden="true">
                   <span className="font-medium text-slate-500">{heading}</span>
                   {!loading && !error && cases.length > 0 && (
-                    <span className="text-slate-400"> · {visibleCases.length} of {cases.length}{appliedFilters.length > 0 ? <> · {appliedFilters.join(' · ')}</> : ''} · <span className="text-slate-500">by {sortLabel}</span></span>
+                    <span className="text-slate-400"> · {visibleCases.length} of {cases.length}{appliedFilters.length > 0 ? <> · {appliedFilters.join(' · ')}</> : ''}{query.trim() && scope !== 'all' ? <> · <span className="text-primary">all statuses</span></> : ''} · <span className="text-slate-500">by {sortLabel}</span></span>
                   )}
                 </span>
                 {isDoctor && (
                   <button
                     onClick={() => { setShowForm(v => !v); track('new_case_toggle', { open: !showForm }) }}
+                    data-intent="new_case_toggle"
                     className="inline-flex items-center gap-1 bg-primary text-white text-xs font-medium px-2.5 py-1 rounded-md hover:bg-primary/90 shadow-sm transition"
                   >
                     {showForm ? 'Cancel' : (
@@ -717,6 +765,7 @@ export default function CaseList() {
                     <button
                       type="button"
                       onClick={toggleUnreadOnly}
+                      data-intent="filter_unread_toggle"
                       aria-pressed={unreadOnly}
                       title={unreadOnly ? 'Showing only unread — click to show all' : `Show only the ${totalUnread} case${totalUnread === 1 ? '' : 's'} with unread messages`}
                       className={`relative inline-flex items-center gap-1 shrink-0 whitespace-nowrap text-xs font-semibold px-2.5 py-1 rounded-md transition duration-150 transform-gpu active:brightness-95 ${unreadOnly ? 'bg-white text-accent ring-2 ring-accent shadow-inner' : 'bg-accent text-white shadow-sm hover:shadow-md motion-safe:hover:scale-105'}`}
@@ -740,7 +789,7 @@ export default function CaseList() {
                     </button>
                   )}
                   {hasFilters && (
-                    <button type="button" onClick={clearFilters} className="shrink-0 px-2.5 py-2 text-sm text-slate-500 hover:text-primary">Clear</button>
+                    <button type="button" onClick={clearFilters} data-intent="filter_clear" className="shrink-0 px-2.5 py-2 text-sm text-slate-500 hover:text-primary">Clear</button>
                   )}
                   </div>
 
@@ -881,7 +930,7 @@ export default function CaseList() {
                   </div>
                 </div>
                 <div className="mt-5 flex justify-end">
-                  <button type="submit" disabled={creating} className="bg-primary text-white text-sm font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 shadow-sm transition disabled:opacity-60">
+                  <button type="submit" disabled={creating} data-intent="case_create" className="bg-primary text-white text-sm font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 shadow-sm transition disabled:opacity-60">
                     {creating ? 'Creating…' : 'Create Case'}
                   </button>
                 </div>
@@ -910,7 +959,7 @@ export default function CaseList() {
             ) : visibleCases.length === 0 ? (
               <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-12 text-center">
                 <p className="text-slate-500">No cases match your filters.</p>
-                <button type="button" onClick={clearFilters} className="mt-2 text-sm text-primary hover:underline">Clear filters</button>
+                <button type="button" onClick={clearFilters} data-intent="filter_clear" className="mt-2 text-sm text-primary hover:underline">Clear filters</button>
               </div>
             ) : (
                   <ul className="@container space-y-4">
@@ -923,6 +972,7 @@ export default function CaseList() {
                       <Link
                         href={`/portal/cases/${c.id}`}
                         onClick={() => { rememberListState(); track('case_open', { caseId: c.id, from: 'list' }) }}
+                        data-intent="case_open"
                         aria-current={isActive ? 'page' : undefined}
                         className={`group relative block rounded-2xl border transition-all pl-5 pr-4 py-4 overflow-hidden ${isActive ? 'border-primary ring-1 ring-primary/30 bg-primary/[0.03] shadow-md' : 'bg-white border-slate-200 hover:border-primary/40 hover:shadow-md shadow-sm'} ${isFocused ? 'ring-2 ring-primary ring-offset-1' : ''}`}
                       >
@@ -1024,6 +1074,7 @@ export default function CaseList() {
                   <button
                     type="button"
                     onClick={() => { setPage(p => Math.max(1, p - 1)); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
+                    data-intent="page_prev"
                     disabled={currentPage <= 1}
                     className="px-3 py-1.5 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
@@ -1033,6 +1084,7 @@ export default function CaseList() {
                   <button
                     type="button"
                     onClick={() => { setPage(p => Math.min(totalPages, p + 1)); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
+                    data-intent="page_next"
                     disabled={currentPage >= totalPages}
                     className="px-3 py-1.5 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
                   >

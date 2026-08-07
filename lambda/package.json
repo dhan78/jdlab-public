@@ -1,0 +1,23 @@
+{
+  "name": "jdlab-scan-convert",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "S3-triggered AWS Lambda: converts raw STL/PLY/OBJ(zip) intraoral scans into decimated Meshopt GLB. Reuses the pure-Node convertScan() core from ../scripts/convert-scan.mjs.",
+  "main": "handler.mjs",
+  "scripts": {
+    "vendor": "node --input-type=module -e \"import{copyFileSync}from'node:fs';copyFileSync('../scripts/convert-scan.mjs','convert-scan.mjs');console.log('vendored convert-scan.mjs')\"",
+    "bundle": "npm run vendor && npm install --omit=dev"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "^3.4.8",
+    "@gltf-transform/extensions": "^3.4.8",
+    "@gltf-transform/functions": "^3.4.8",
+    "fflate": "^0.8.2",
+    "meshoptimizer": "^1.1.1",
+    "three": "^0.184.0"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.658.0"
+  }
+}

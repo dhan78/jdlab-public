@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers'
-import { redirect } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { verifySessionToken } from '@/lib/portal-auth'
+import { findCaseById } from '@/lib/case-store'
 import CaseThread from '@/components/CaseThread'
 
 export const metadata = {
@@ -19,6 +20,17 @@ export default async function CaseDetailPage({
 
   if (!session) {
     redirect('/portal/login')
+  }
+
+  // Resolve the case up front so a mistyped/deleted/forbidden id renders our
+  // friendly not-found panel (HTTP 404) instead of a red client-side error.
+  // We return 404 for "no access" too (not 403) so we never leak to one doctor
+  // that another doctor's case exists.
+  const caseRow = await findCaseById(id)
+  const canAccess =
+    !!caseRow && (session.role !== 'doctor' || session.sub === caseRow.doctorId)
+  if (!canAccess) {
+    notFound()
   }
 
   return (

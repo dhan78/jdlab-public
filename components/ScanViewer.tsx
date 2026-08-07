@@ -17,18 +17,27 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { Canvas, useThree } from '@react-three/fiber'
-import { OrbitControls, Html } from '@react-three/drei'
+import { OrbitControls, Html, Bounds, useBounds, Line } from '@react-three/drei'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js'
-import type { BufferGeometry } from 'three'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
+import { NeutralToneMapping, Vector3 } from 'three'
+import type { BufferGeometry, Group } from 'three'
+import { scanCacheKey, getScanBytes, putScanBytes } from '@/lib/scan-cache'
 
 // A 3D surface pin the doctor or lab drops on the scan. Coordinates are in the
 // centered-geometry local space (see the store), so they re-anchor on reload.
 export interface ScanAnnotation {
   id: string
+  kind?: string // 'pin' | 'measure'
   x: number
   y: number
   z: number
+  bx?: number | null
+  by?: number | null
+  bz?: number | null
   body: string
   authorName: string
   authorRole: string
@@ -45,12 +54,22 @@ interface ScanViewerProps {
   /** Called with a short detail when the model fails to load/parse, so the
    *  caller can capture it into telemetry (the viewer only shows a banner). */
   onError?: (detail: string) => void
+  /** Called once the model successfully parses/renders (viewing activity). */
+  onLoad?: () => void
   /** Existing pins to render on the model. */
   annotations?: ScanAnnotation[]
-  /** Create a pin at a picked surface point. Presence enables the "Add pin" UI. */
-  onCreateAnnotation?: (a: { x: number; y: number; z: number; body: string }) => void | Promise<void>
+  /** Create a pin, or a measurement (kind='measure' with a second point B).
+   *  Presence enables the "Add pin" / "Measure" UI. */
+  onCreateAnnotation?: (a: {
+    x: number; y: number; z: number; body: string
+    kind?: string; bx?: number; by?: number; bz?: number
+  }) => void | Promise<void>
   /** Delete a pin by id (only offered on pins the caller marked `canDelete`). */
   onDeleteAnnotation?: (id: string) => void | Promise<void>
+  /** View-only mode: render the model + existing pins/measurements but hide ALL
+   *  authoring controls (used by the public /demo surface). Belt-and-suspenders
+   *  on top of simply not passing the create/delete callbacks. */
+  readOnly?: boolean
 }
 
 // Parse an STL or PLY ArrayBuffer into a centered, normalized geometry. The
@@ -66,6 +85,66 @@ function prepare(buffer: ArrayBuffer): BufferGeometry {
   if (!geo.getAttribute('normal')) geo.computeVertexNormals()
   geo.computeBoundingSphere()
   return geo
+}
+
+// Meshopt's WASM decoder is a process-wide singleton whose heap can grow (and
+// detach its backing ArrayBuffer) mid-decode. When a case renders several inline
+// model viewers, their GLB decodes race on that shared heap and throw "Offset is
+// outside the bounds of the DataView" (the survivor still renders, the losers
+// error out). Await the decoder once, then serialize decodes through a queue so
+// only one is ever in flight — eliminating the race without hurting correctness.
+let meshoptReady: Promise<unknown> | null = null
+let glbDecodeQueue: Promise<unknown> = Promise.resolve()
+
+function parseGlb(buffer: ArrayBuffer): Promise<GLTF> {
+  const run = async (): Promise<GLTF> => {
+    if (!meshoptReady) meshoptReady = MeshoptDecoder.ready
+    await meshoptReady
+    const loader = new GLTFLoader()
+    loader.setMeshoptDecoder(MeshoptDecoder)
+    return new Promise<GLTF>((resolve, reject) => {
+      loader.parse(buffer, '', resolve, reject)
+    })
+  }
+  const result = glbDecodeQueue.then(run, run)
+  // Keep the chain alive but never let a rejection poison later decodes.
+  glbDecodeQueue = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  return result
+}
+
+// In-memory PARSED cache: skip the Meshopt/STL decode on remounts and tab-hops
+// within a session. Keyed by the stable S3 object path (query stripped). We keep
+// a pristine MASTER and hand each mount a clone, so concurrent viewers (a tiled
+// preview + the maximized overlay of the same scan) never share one scene graph.
+// Clones share the underlying (read-only) geometry/material, so a clone is cheap
+// relative to a full decode. LRU-bounded to cap decoded-mesh memory on mobile.
+type ParsedScan =
+  | { kind: 'glb'; scene: Group }
+  | { kind: 'mesh'; geometry: BufferGeometry }
+
+const MAX_PARSED = 8 // ~ one full case's worth of scans
+const parsedCache = new Map<string, ParsedScan>()
+
+function parsedGet(key: string): ParsedScan | undefined {
+  const p = parsedCache.get(key)
+  if (p) {
+    parsedCache.delete(key)
+    parsedCache.set(key, p) // bump to most-recently-used
+  }
+  return p
+}
+
+function parsedPut(key: string, p: ParsedScan): void {
+  if (parsedCache.has(key)) parsedCache.delete(key)
+  parsedCache.set(key, p)
+  while (parsedCache.size > MAX_PARSED) {
+    const oldest = parsedCache.keys().next().value as string | undefined
+    if (oldest === undefined) break
+    parsedCache.delete(oldest)
+  }
 }
 
 // A draft pin position awaiting a note (before it's saved).
@@ -167,10 +246,10 @@ function AnnotationBadge({
   onDelete?: (id: string) => void
 }) {
   return (
-    <div className="relative">
+    <div className="relative" onPointerDown={e => e.stopPropagation()}>
       <button
         type="button"
-        onPointerDown={e => e.stopPropagation()}
+        data-intent="annotation_open"
         onClick={e => {
           e.stopPropagation()
           onSelect(selected ? null : annotation.id)
@@ -180,27 +259,29 @@ function AnnotationBadge({
       >
         {index}
       </button>
-      {selected && (
-        <div
-          onPointerDown={e => e.stopPropagation()}
-          className="absolute left-8 top-1/2 z-10 w-56 -translate-y-1/2 rounded-lg bg-slate-900/95 p-3 text-left shadow-xl ring-1 ring-white/10"
-        >
-          <p className="whitespace-pre-wrap break-words text-sm text-slate-100">{annotation.body}</p>
-          <p className="mt-2 text-[11px] text-slate-400">{annotation.authorName}</p>
-          {annotation.canDelete && onDelete && (
-            <button
-              type="button"
-              onClick={e => {
-                e.stopPropagation()
-                onDelete(annotation.id)
-              }}
-              className="mt-2 text-xs text-red-300 hover:text-red-200"
-            >
-              Delete pin
-            </button>
-          )}
-        </div>
-      )}
+      {/* The note is always visible beside the dot; clicking the dot expands it
+          to show the author and (for the author/admin) a delete control. */}
+      <div className="absolute left-8 top-1/2 z-10 w-max max-w-[220px] -translate-y-1/2 rounded-lg bg-slate-900/90 px-2.5 py-1.5 text-left shadow-lg ring-1 ring-white/10">
+        <p className="whitespace-pre-wrap break-words text-xs leading-snug text-slate-100">{annotation.body}</p>
+        {selected && (
+          <>
+            <p className="mt-1 text-[10px] text-slate-400">{annotation.authorName}</p>
+            {annotation.canDelete && onDelete && (
+              <button
+                type="button"
+                data-intent="annotation_delete"
+                onClick={e => {
+                  e.stopPropagation()
+                  onDelete(annotation.id)
+                }}
+                className="mt-1 text-[11px] text-red-300 hover:text-red-200"
+              >
+                Delete pin
+              </button>
+            )}
+          </>
+        )}
+      </div>
     </div>
   )
 }
@@ -223,11 +304,12 @@ function DraftEditor({ onSave, onCancel }: { onSave: (body: string) => void; onC
         className="w-full resize-none rounded bg-slate-800 p-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none"
       />
       <div className="mt-2 flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="text-xs text-slate-400 hover:text-slate-200">
+        <button type="button" data-intent="annotation_cancel" onClick={onCancel} className="text-xs text-slate-400 hover:text-slate-200">
           Cancel
         </button>
         <button
           type="button"
+          data-intent="annotation_save"
           disabled={!text.trim()}
           onClick={() => onSave(text.trim())}
           className="rounded bg-primary px-2.5 py-1 text-xs font-medium text-white transition hover:bg-primary/90 disabled:opacity-50"
@@ -246,6 +328,293 @@ function FrameOnChange({ signal }: { signal: unknown }) {
   useEffect(() => {
     invalidate()
   }, [invalidate, signal])
+  return null
+}
+
+// Frames the model ONCE per loaded scene, then never again — so re-renders from
+// toggling measure / adding a pin don't reset the user's orbit/pan/zoom. (drei's
+// `<Bounds fit observe>` refits on every render, which caused the view to reset.)
+function FitOnce({ scene }: { scene: Group }) {
+  const bounds = useBounds()
+  useEffect(() => {
+    bounds.refresh().clip().fit()
+  }, [bounds, scene])
+  return null
+}
+
+// GLB scene: renders the loaded gltf.scene (materials/colors preserved) framed
+// by drei <Bounds> WITHOUT rescaling — GLB geometry is in real millimetres, so
+// picked world points are usable measurements directly. Shares the STL/PLY pin
+// UX plus a local-only measure tool.
+function GlbScene({
+  scene,
+  annotations,
+  addMode,
+  measureMode,
+  pendingPoint,
+  pendingMeasure,
+  draft,
+  selectedId,
+  onPick,
+  onMeasurePick,
+  onSelect,
+  onSaveDraft,
+  onCancelDraft,
+  onSaveMeasure,
+  onCancelMeasure,
+  onDelete,
+}: {
+  scene: Group
+  annotations: ScanAnnotation[]
+  addMode: boolean
+  measureMode: boolean
+  pendingPoint: Vector3 | null
+  pendingMeasure: { a: Vector3; b: Vector3 } | null
+  draft: DraftPoint | null
+  selectedId: string | null
+  onPick: (x: number, y: number, z: number) => void
+  onMeasurePick: (x: number, y: number, z: number) => void
+  onSelect: (id: string | null) => void
+  onSaveDraft: (body: string) => void
+  onCancelDraft: () => void
+  onSaveMeasure: (body: string) => void
+  onCancelMeasure: () => void
+  onDelete?: (id: string) => void
+}) {
+  const interactive = addMode || measureMode
+  // Screen coords at pointer-down, to tell a tap (place a point) from a drag (orbit).
+  const down = useRef<{ x: number; y: number } | null>(null)
+  const pins = annotations.filter(a => a.kind !== 'measure')
+  const measures = annotations.filter(a => a.kind === 'measure' && a.bx != null && a.by != null && a.bz != null)
+
+  return (
+    <>
+      {/* Frame the model ONCE per scene (via FitOnce) — NOT on every render, so
+          toggling measure / placing a pin never resets the user's orbit/pan. The
+          geometry is NOT rescaled, so world hit points stay in real millimetres. */}
+      <Bounds clip margin={1.2}>
+        <FitOnce scene={scene} />
+        <primitive
+          object={scene}
+          onPointerDown={(e: { nativeEvent: PointerEvent }) => {
+            if (interactive) down.current = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY }
+          }}
+          onPointerMove={() => {
+            // Movement is measured on pointer-up against the down point below.
+          }}
+          onPointerUp={(e: { nativeEvent: PointerEvent; point: Vector3; stopPropagation: () => void }) => {
+            if (!interactive) return
+            const d = down.current
+            down.current = null
+            if (!d) return
+            const dx = e.nativeEvent.clientX - d.x
+            const dy = e.nativeEvent.clientY - d.y
+            if (dx * dx + dy * dy > 144) return // moved too far — that was an orbit, not a tap
+            e.stopPropagation()
+            // GLB isn't rescaled, so the WORLD hit point is used directly.
+            if (measureMode) onMeasurePick(e.point.x, e.point.y, e.point.z)
+            else onPick(e.point.x, e.point.y, e.point.z)
+          }}
+        />
+      </Bounds>
+
+      {pins.map((a, i) => (
+        <Html key={a.id} position={[a.x, a.y, a.z]} center zIndexRange={[20, 0]}>
+          <AnnotationBadge
+            index={i + 1}
+            annotation={a}
+            selected={selectedId === a.id}
+            onSelect={onSelect}
+            onDelete={onDelete}
+          />
+        </Html>
+      ))}
+
+      {draft && (
+        <Html position={[draft.x, draft.y, draft.z]} center zIndexRange={[30, 0]}>
+          <DraftEditor onSave={onSaveDraft} onCancel={onCancelDraft} />
+        </Html>
+      )}
+
+      {/* Persisted, shared measurements (line + distance + optional note), visible
+          to both dentist and lab. */}
+      {measures.map(a => {
+        const A = new Vector3(a.x, a.y, a.z)
+        const B = new Vector3(a.bx as number, a.by as number, a.bz as number)
+        const m = A.clone().add(B).multiplyScalar(0.5)
+        return (
+          <group key={a.id}>
+            <Line points={[A, B]} color="#38bdf8" lineWidth={2} />
+            <Html position={[A.x, A.y, A.z]} center zIndexRange={[26, 0]}>
+              <MeasureDot />
+            </Html>
+            <Html position={[B.x, B.y, B.z]} center zIndexRange={[26, 0]}>
+              <MeasureDot />
+            </Html>
+            <Html position={[m.x, m.y, m.z]} center zIndexRange={[27, 0]}>
+              <MeasureBadge
+                annotation={a}
+                distance={A.distanceTo(B)}
+                selected={selectedId === a.id}
+                onSelect={onSelect}
+                onDelete={onDelete}
+              />
+            </Html>
+          </group>
+        )
+      })}
+
+      {/* In-progress first point of the current measurement. */}
+      {pendingPoint && (
+        <Html position={[pendingPoint.x, pendingPoint.y, pendingPoint.z]} center zIndexRange={[26, 0]}>
+          <MeasureDot />
+        </Html>
+      )}
+      {/* Two points placed → show the line + a save-with-note editor. */}
+      {pendingMeasure && (
+        <>
+          <Line points={[pendingMeasure.a, pendingMeasure.b]} color="#38bdf8" lineWidth={2} />
+          <Html position={[pendingMeasure.a.x, pendingMeasure.a.y, pendingMeasure.a.z]} center zIndexRange={[26, 0]}>
+            <MeasureDot />
+          </Html>
+          <Html position={[pendingMeasure.b.x, pendingMeasure.b.y, pendingMeasure.b.z]} center zIndexRange={[26, 0]}>
+            <MeasureDot />
+          </Html>
+          <Html
+            position={[
+              (pendingMeasure.a.x + pendingMeasure.b.x) / 2,
+              (pendingMeasure.a.y + pendingMeasure.b.y) / 2,
+              (pendingMeasure.a.z + pendingMeasure.b.z) / 2,
+            ]}
+            center
+            zIndexRange={[35, 0]}
+          >
+            <MeasureEditor
+              distance={pendingMeasure.a.distanceTo(pendingMeasure.b)}
+              onSave={onSaveMeasure}
+              onCancel={onCancelMeasure}
+            />
+          </Html>
+        </>
+      )}
+    </>
+  )
+}
+
+function MeasureDot() {
+  return <span className="pointer-events-none block h-2.5 w-2.5 rounded-full bg-sky-400 shadow ring-2 ring-white" />
+}
+
+// A saved measurement: clickable distance chip → note/author/delete popover.
+function MeasureBadge({
+  annotation,
+  distance,
+  selected,
+  onSelect,
+  onDelete,
+}: {
+  annotation: ScanAnnotation
+  distance: number
+  selected: boolean
+  onSelect: (id: string | null) => void
+  onDelete?: (id: string) => void
+}) {
+  return (
+    <div className="relative" onPointerDown={e => e.stopPropagation()}>
+      <button
+        type="button"
+        data-intent="measure_open"
+        onClick={e => {
+          e.stopPropagation()
+          onSelect(selected ? null : annotation.id)
+        }}
+        className="select-none rounded bg-sky-500/90 px-1.5 py-0.5 text-[11px] font-semibold text-white shadow ring-1 ring-white/20 transition hover:bg-sky-400"
+        title={annotation.body || `${distance.toFixed(1)} mm`}
+      >
+        {distance.toFixed(1)} mm
+      </button>
+      {selected && (
+        <div className="absolute left-1/2 top-7 z-10 w-52 -translate-x-1/2 rounded-lg bg-slate-900/95 p-3 text-left shadow-xl ring-1 ring-white/10">
+          {annotation.body && (
+            <p className="whitespace-pre-wrap break-words text-sm text-slate-100">{annotation.body}</p>
+          )}
+          <p className="mt-1 text-[10px] text-slate-400">
+            {annotation.authorName} · {distance.toFixed(1)} mm
+          </p>
+          {annotation.canDelete && onDelete && (
+            <button
+              type="button"
+              data-intent="measure_delete"
+              onClick={e => {
+                e.stopPropagation()
+                onDelete(annotation.id)
+              }}
+              className="mt-1 text-[11px] text-red-300 hover:text-red-200"
+            >
+              Delete measurement
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Shown after two points are placed: distance + optional note → Save / Cancel.
+function MeasureEditor({
+  distance,
+  onSave,
+  onCancel,
+}: {
+  distance: number
+  onSave: (body: string) => void
+  onCancel: () => void
+}) {
+  const [text, setText] = useState('')
+  return (
+    <div
+      onPointerDown={e => e.stopPropagation()}
+      className="w-56 -translate-x-1/2 rounded-lg bg-slate-900/95 p-3 shadow-xl ring-1 ring-white/10"
+    >
+      <p className="text-sm font-semibold text-white">{distance.toFixed(1)} mm</p>
+      <textarea
+        autoFocus
+        rows={2}
+        value={text}
+        maxLength={500}
+        onChange={e => setText(e.target.value)}
+        placeholder="Add a note for the dentist (optional)…"
+        className="mt-2 w-full resize-none rounded bg-slate-800 p-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none"
+      />
+      <div className="mt-2 flex justify-end gap-2">
+        <button type="button" data-intent="measure_cancel" onClick={onCancel} className="text-xs text-slate-400 hover:text-slate-200">
+          Cancel
+        </button>
+        <button
+          type="button"
+          data-intent="measure_save"
+          onClick={() => onSave(text.trim())}
+          className="rounded bg-sky-500 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-sky-400"
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// Neutral tone mapping + slight exposure trim so color intraoral GLBs don't
+// read as over-lit (mirrors GlbViewer). Only mounted on the GLB branch.
+function GlbTone() {
+  const gl = useThree(s => s.gl)
+  const invalidate = useThree(s => s.invalidate)
+  useEffect(() => {
+    /* eslint-disable react-hooks/immutability */
+    gl.toneMapping = NeutralToneMapping
+    gl.toneMappingExposure = 0.9
+    /* eslint-enable react-hooks/immutability */
+    invalidate()
+  }, [gl, invalidate])
   return null
 }
 
@@ -268,49 +637,120 @@ export default function ScanViewer({
   file,
   className,
   onError,
+  onLoad,
   annotations,
   onCreateAnnotation,
   onDeleteAnnotation,
+  readOnly = false,
 }: ScanViewerProps) {
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null)
+  const [scene, setScene] = useState<Group | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   // Annotation interaction state.
   const [addMode, setAddMode] = useState(false)
   const [draft, setDraft] = useState<DraftPoint | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Measure tool (GLB branch only; local, not persisted).
+  const [measureMode, setMeasureMode] = useState(false)
+  // Measure tool (GLB only): first point placed, then a two-point pending
+  // measurement awaiting an optional note + Save (persisted, shared with both).
+  const [pendingPoint, setPendingPoint] = useState<Vector3 | null>(null)
+  const [pendingMeasure, setPendingMeasure] = useState<{ a: Vector3; b: Vector3 } | null>(null)
   const pins = annotations ?? []
-  const canAnnotate = !!onCreateAnnotation
+  // Any authoring (pins AND the measure tool, which persists via onCreateAnnotation)
+  // requires a create callback and a non-read-only viewer.
+  const canAnnotate = !!onCreateAnnotation && !readOnly
   // Keep the latest onError without making it an effect dep (it's an inline
   // callback that changes every render — putting it in deps would refetch).
   const onErrorRef = useRef(onError)
   useEffect(() => {
     onErrorRef.current = onError
   }, [onError])
+  const onLoadRef = useRef(onLoad)
+  useEffect(() => {
+    onLoadRef.current = onLoad
+  }, [onLoad])
 
   useEffect(() => {
     let cancelled = false
     setError(null)
     setGeometry(null)
+    setScene(null)
+    setMeasureMode(false)
+    setPendingPoint(null)
+    setPendingMeasure(null)
     if (!file && !url) return
 
     setLoading(true)
     const run = async () => {
       try {
+        // Scans are served via presigned S3 URLs whose signature rotates each
+        // load, so the browser HTTP cache never hits. Cache by the STABLE object
+        // path (query stripped): parsed-scene cache → byte cache → network.
+        const key = url && !file ? scanCacheKey(url) : null
+
+        // Tier 0: already-parsed in this session → clone and show instantly
+        // (skips both the network AND the Meshopt/STL decode).
+        if (key) {
+          const parsed = parsedGet(key)
+          if (parsed) {
+            if (cancelled) return
+            if (parsed.kind === 'glb') setScene(parsed.scene.clone(true) as Group)
+            else setGeometry(parsed.geometry.clone())
+            setLoading(false)
+            onLoadRef.current?.()
+            return
+          }
+        }
+
         let buffer: ArrayBuffer
         if (file) {
           buffer = await file.arrayBuffer()
         } else {
-          // Distinguish a blocked/denied S3 GET (CORS/403) from a bad file: a
-          // failed fetch throws, a non-2xx gives a clear `fetch <status>`.
-          const res = await fetch(url!)
-          if (!res.ok) throw new Error(`fetch ${res.status}`)
-          buffer = await res.arrayBuffer()
+          // Tier 1/2: cached bytes (memory → Cache Storage), else fetch from S3.
+          const cachedBytes = key ? await getScanBytes(key) : null
+          if (cachedBytes) {
+            buffer = cachedBytes
+          } else {
+            // Distinguish a blocked/denied S3 GET (CORS/403) from a bad file: a
+            // failed fetch throws, a non-2xx gives a clear `fetch <status>`.
+            const res = await fetch(url!)
+            if (!res.ok) throw new Error(`fetch ${res.status}`)
+            buffer = await res.arrayBuffer()
+            // Persist for future revisits (best-effort; never blocks render).
+            if (key) void putScanBytes(key, buffer)
+          }
+        }
+        if (cancelled) return
+        // Sniff the GLB binary magic ("glTF" = 0x67 0x6C 0x54 0x46). GLBs render
+        // via GLTFLoader with materials preserved; STL/PLY keep their own path.
+        const magic = new Uint8Array(buffer, 0, Math.min(4, buffer.byteLength))
+        const isGlb =
+          magic[0] === 0x67 && magic[1] === 0x6c && magic[2] === 0x54 && magic[3] === 0x46
+        if (isGlb) {
+          try {
+            const gltf = await parseGlb(buffer)
+            if (cancelled) return
+            // Cache the pristine master; display a clone (see parsedCache note).
+            if (key) parsedPut(key, { kind: 'glb', scene: gltf.scene })
+            setScene(gltf.scene.clone(true) as Group)
+            setLoading(false)
+            onLoadRef.current?.()
+          } catch (err) {
+            if (cancelled) return
+            setError('Could not load or parse this 3D model.')
+            setLoading(false)
+            onErrorRef.current?.(err instanceof Error ? err.message : 'glb parse failed')
+          }
+          return
         }
         const geo = prepare(buffer)
         if (!cancelled) {
-          setGeometry(geo)
+          if (key) parsedPut(key, { kind: 'mesh', geometry: geo })
+          setGeometry(geo.clone())
           setLoading(false)
+          onLoadRef.current?.()
         }
       } catch (e) {
         if (!cancelled) {
@@ -328,16 +768,17 @@ export default function ScanViewer({
   }, [url, file])
 
   return (
-    <div className={`relative ${className ?? ''}`}>
+    <div className={`relative ${className ?? ''} ${measureMode || addMode ? '[&_canvas]:!cursor-crosshair' : ''}`}>
       <Canvas frameloop="demand" dpr={[1, 2]} camera={{ position: [0, 0, 3], fov: 45 }}>
         <color attach="background" args={['#0e1626']} />
         <ambientLight intensity={0.65} />
         <directionalLight position={[4, 5, 6]} intensity={0.9} />
         <directionalLight position={[-4, -3, -5]} intensity={0.35} />
+        {scene && <hemisphereLight args={['#ffffff', '#3a3a3a', 0.6]} />}
         {geometry && (
           <Scene
             geometry={geometry}
-            annotations={pins}
+            annotations={pins.filter(a => a.kind !== 'measure')}
             addMode={addMode}
             draft={draft}
             selectedId={selectedId}
@@ -363,31 +804,93 @@ export default function ScanViewer({
             }
           />
         )}
+        {scene && (
+          <>
+            <GlbScene
+              scene={scene}
+              annotations={pins}
+              addMode={addMode}
+              measureMode={measureMode}
+              pendingPoint={pendingPoint}
+              pendingMeasure={pendingMeasure}
+              draft={draft}
+              selectedId={selectedId}
+              onPick={(x, y, z) => setDraft({ x, y, z })}
+              onMeasurePick={(x, y, z) => {
+                if (pendingMeasure) return
+                const pt = new Vector3(x, y, z)
+                if (pendingPoint) {
+                  setPendingMeasure({ a: pendingPoint, b: pt })
+                  setPendingPoint(null)
+                } else {
+                  setPendingPoint(pt)
+                }
+              }}
+              onSaveMeasure={body => {
+                if (!pendingMeasure) return
+                const { a, b } = pendingMeasure
+                void onCreateAnnotation?.({ kind: 'measure', x: a.x, y: a.y, z: a.z, bx: b.x, by: b.y, bz: b.z, body })
+                setPendingMeasure(null)
+              }}
+              onCancelMeasure={() => {
+                setPendingMeasure(null)
+                setPendingPoint(null)
+              }}
+              onSelect={setSelectedId}
+              onSaveDraft={async body => {
+                if (!draft) return
+                await onCreateAnnotation?.({ ...draft, body })
+                setDraft(null)
+                setAddMode(false)
+              }}
+              onCancelDraft={() => {
+                setDraft(null)
+                setAddMode(false)
+              }}
+              onDelete={
+                onDeleteAnnotation
+                  ? async id => {
+                      await onDeleteAnnotation(id)
+                      setSelectedId(null)
+                    }
+                  : undefined
+              }
+            />
+            <GlbTone />
+          </>
+        )}
         <OrbitControls makeDefault enableDamping={false} enablePan enableZoom enableRotate />
-        <FrameOnChange signal={`${pins.length}:${addMode}:${draft ? 1 : 0}:${selectedId ?? ''}`} />
+        <FrameOnChange
+          signal={`${pins.length}:${addMode}:${draft ? 1 : 0}:${selectedId ?? ''}:${measureMode}:${pendingMeasure ? 1 : 0}:${pendingPoint ? 1 : 0}`}
+        />
       </Canvas>
 
-      {/* Annotation controls (only when the caller wired up create). */}
-      {canAnnotate && geometry && !error && (
+      {/* Annotation + measure controls. */}
+      {!error && (geometry || scene) && (
         <div className="absolute left-2 top-2 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setSelectedId(null)
-              setDraft(null)
-              setAddMode(m => !m)
-            }}
-            className={`rounded-lg px-2.5 py-1.5 text-xs font-medium shadow-sm backdrop-blur-sm transition ${
-              addMode
-                ? 'bg-amber-400 text-slate-900 hover:bg-amber-300'
-                : 'bg-black/40 text-white/90 hover:bg-black/60'
-            }`}
-          >
-            {addMode ? 'Click the model to pin' : '+ Add pin'}
-          </button>
-          {addMode && (
+          {canAnnotate && (
             <button
               type="button"
+              data-intent="annotation_addmode"
+              onClick={() => {
+                setSelectedId(null)
+                setDraft(null)
+                setMeasureMode(false)
+                setAddMode(m => !m)
+              }}
+              className={`rounded-lg px-2.5 py-1.5 text-xs font-medium shadow-sm backdrop-blur-sm transition ${
+                addMode
+                  ? 'bg-amber-400 text-slate-900 hover:bg-amber-300'
+                  : 'bg-black/40 text-white/90 hover:bg-black/60'
+              }`}
+            >
+              {addMode ? 'Click the model to pin' : '+ Add pin'}
+            </button>
+          )}
+          {canAnnotate && addMode && (
+            <button
+              type="button"
+              data-intent="annotation_addmode_cancel"
               onClick={() => {
                 setAddMode(false)
                 setDraft(null)
@@ -397,12 +900,43 @@ export default function ScanViewer({
               Cancel
             </button>
           )}
+          {scene && canAnnotate && (
+            <button
+              type="button"
+              data-intent="measure_toggle"
+              onClick={() => {
+                setAddMode(false)
+                setDraft(null)
+                setMeasureMode(m => !m)
+              }}
+              className={`rounded-lg px-2.5 py-1.5 text-xs font-medium shadow-sm backdrop-blur-sm transition ${
+                measureMode
+                  ? 'bg-sky-400 text-slate-900 hover:bg-sky-300'
+                  : 'bg-black/40 text-white/90 hover:bg-black/60'
+              }`}
+            >
+              {measureMode ? (pendingMeasure ? 'Add note & save' : pendingPoint ? 'Click 2nd point' : 'Click a point') : '↔ Measure'}
+            </button>
+          )}
+          {scene && canAnnotate && (pendingPoint || pendingMeasure) && (
+            <button
+              type="button"
+              data-intent="measure_clear"
+              onClick={() => {
+                setPendingPoint(null)
+                setPendingMeasure(null)
+              }}
+              className="rounded-lg bg-black/40 px-2.5 py-1.5 text-xs text-white/80 backdrop-blur-sm transition hover:bg-black/60"
+            >
+              Clear
+            </button>
+          )}
         </div>
       )}
 
       {loading && <Overlay>Loading scan…</Overlay>}
       {error && <Overlay tone="error">{error}</Overlay>}
-      {!loading && !error && !geometry && <Overlay>No scan loaded</Overlay>}
+      {!loading && !error && !geometry && !scene && <Overlay>No scan loaded</Overlay>}
     </div>
   )
 }

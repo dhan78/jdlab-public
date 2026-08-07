@@ -64,6 +64,47 @@
   }
 }
 
+/* Sleepy-puppy mascot (404 / not-found states). Motion is gated behind
+   prefers-reduced-motion so motion-sensitive users get a calm static pup.
+   transform-box: fill-box lets percentage transform-origins resolve against
+   each SVG shape's own box. */
+.puppy-breathe,
+.puppy-ear-l,
+.puppy-ear-r,
+.puppy-z1,
+.puppy-z2 {
+  transform-box: fill-box;
+}
+.puppy-breathe { transform-origin: 50% 62%; }
+.puppy-ear-l { transform-origin: 60% 22%; }
+.puppy-ear-r { transform-origin: 40% 22%; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .puppy-breathe { animation: puppy-breathe 3s ease-in-out infinite; }
+  .puppy-ear-l { animation: puppy-ear-l 2.8s ease-in-out infinite; }
+  .puppy-ear-r { animation: puppy-ear-r 3.2s ease-in-out infinite; }
+  .puppy-z1 { animation: puppy-z 2.6s ease-in-out infinite; }
+  .puppy-z2 { animation: puppy-z 2.6s ease-in-out 1.3s infinite; }
+}
+
+@keyframes puppy-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.055); }
+}
+@keyframes puppy-ear-l {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-8deg); }
+}
+@keyframes puppy-ear-r {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(8deg); }
+}
+@keyframes puppy-z {
+  0% { transform: translate(0, 0); opacity: 0; }
+  25% { opacity: 0.85; }
+  100% { transform: translate(8px, -20px); opacity: 0; }
+}
+
 /* Coverflow 3D carousel */
 .coverflow-container {
   position: relative;

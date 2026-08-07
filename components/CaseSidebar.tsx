@@ -214,12 +214,12 @@ export default function CaseSidebar({
               return (
                 <Fragment key={c.id}>
                 {isFirstPinned && (
-                  <li className="flex items-center gap-1.5 px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-primary/70">
+                  <li className="flex items-center gap-1.5 bg-primary/10 px-4 pt-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-primary">
                     <PinIcon filled className="h-3.5 w-3.5" /> Pinned
                   </li>
                 )}
                 {isFirstRecent && pinnedCases.length > 0 && (
-                  <li className="border-t border-slate-100 px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  <li className="border-t border-slate-200 px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                     Recently viewed
                   </li>
                 )}
@@ -227,33 +227,34 @@ export default function CaseSidebar({
                   <Link
                     href={`/portal/cases/${c.id}`}
                     onClick={() => track('case_open', { caseId: c.id, from: 'recent' })}
+                    data-intent="case_open"
                     aria-current={active ? 'page' : undefined}
                     className={`flex items-start gap-2.5 px-4 py-3 border-l-2 transition-colors group ${
                       active
                         ? 'bg-primary/5 border-primary'
                         : c.pinned
-                        ? 'bg-primary/[0.04] border-primary/30 hover:bg-primary/[0.07]'
+                        ? 'bg-primary/10 border-primary hover:bg-primary/[0.14]'
                         : 'border-transparent hover:bg-slate-50'
                     }`}
                   >
                     <span className="min-w-0 flex-1">
                       <span
                         title={c.title}
-                        className={`block text-sm font-medium leading-snug line-clamp-2 transition-colors ${
+                        className={`block text-sm font-medium leading-snug break-words transition-colors ${
                           active ? 'text-primary' : 'text-slate-800 group-hover:text-primary'
                         }`}
                       >
                         {c.title}
                       </span>
                       {(c.patientName || c.surgeryDate) && (
-                        <span className="block text-xs text-slate-500 truncate mt-0.5">
+                        <span className="block text-xs text-slate-500 break-words mt-0.5">
                           {c.patientName}
                           {c.patientName && c.surgeryDate ? ' · ' : ''}
                           {c.surgeryDate ? formatDate(c.surgeryDate) : ''}
                         </span>
                       )}
                       {role !== 'doctor' && c.doctorName && (
-                        <span className="block text-xs text-slate-500 truncate mt-0.5">
+                        <span className="block text-xs text-slate-500 break-words mt-0.5">
                           {formatDoctorName(c.doctorName)}
                         </span>
                       )}
@@ -314,6 +315,7 @@ export default function CaseSidebar({
                   <button
                     type="button"
                     onClick={() => togglePin(c.id, !c.pinned)}
+                    data-intent="case_pin_toggle"
                     aria-label={c.pinned ? `Unpin ${c.title}` : `Pin ${c.title}`}
                     aria-pressed={!!c.pinned}
                     title={c.pinned ? 'Unpin' : 'Pin to keep in this list'}

@@ -73,13 +73,14 @@ export default function CasesShell({ children }: { children: React.ReactNode }) 
   }
 
   return (
-    <div className="flex items-stretch gap-3 h-[calc(100vh-5rem)]">
+    <div className="flex items-stretch gap-3 h-[calc(100vh-5rem)] overflow-hidden">
       {/* Left area: the hamburger lives here (Gmail-style). When open, the
           recently-viewed list sits beneath it; when collapsed only it remains. */}
       <div className={`flex shrink-0 flex-col min-h-0 ${railOpen ? 'w-60' : 'w-9'}`}>
         <button
           type="button"
           onClick={toggleRail}
+          data-intent="rail_toggle"
           title={railOpen ? 'Hide recently viewed' : 'Show recently viewed'}
           aria-label={railOpen ? 'Hide recently viewed' : 'Show recently viewed'}
           aria-expanded={railOpen}
@@ -96,15 +97,15 @@ export default function CasesShell({ children }: { children: React.ReactNode }) 
         )}
       </div>
 
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 h-full min-h-0">
         <PanelGroup
           direction="horizontal"
           autoSaveId="portal-cases-split"
           ref={groupRef}
           className="h-full"
         >
-          <Panel id="list" order={1} defaultSize={44} minSize={30} className="min-w-0">
-            <div className="h-full overflow-y-auto overflow-x-clip px-4 pb-4">
+          <Panel id="list" order={1} defaultSize={44} minSize={30} className="relative min-w-0">
+            <div className="absolute inset-0 overflow-y-auto overflow-x-clip px-4 pb-4">
               <CaseList />
             </div>
           </Panel>
@@ -123,8 +124,8 @@ export default function CasesShell({ children }: { children: React.ReactNode }) 
             </div>
           </PanelResizeHandle>
 
-          <Panel id="detail" order={2} defaultSize={56} minSize={35} className="min-w-0">
-            <div className="h-full overflow-y-auto px-4 pb-4">{children}</div>
+          <Panel id="detail" order={2} defaultSize={56} minSize={35} className="relative min-w-0">
+            <div className="absolute inset-0 overflow-y-auto px-4 pb-4">{children}</div>
           </Panel>
         </PanelGroup>
       </div>

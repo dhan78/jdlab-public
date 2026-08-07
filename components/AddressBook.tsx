@@ -183,6 +183,7 @@ export default function AddressBook({ doctorId }: { doctorId: string }) {
                     <button
                       type="button"
                       onClick={() => saveEdit(a.id)}
+                      data-intent="address_edit_save"
                       disabled={busyId === a.id}
                       className="btn-primary px-4 py-1.5 text-sm disabled:opacity-60"
                     >
@@ -191,6 +192,7 @@ export default function AddressBook({ doctorId }: { doctorId: string }) {
                     <button
                       type="button"
                       onClick={() => setEditId(null)}
+                      data-intent="address_edit_cancel"
                       className="text-gray-600 hover:text-gray-800 text-sm font-medium"
                     >
                       Cancel
@@ -215,6 +217,7 @@ export default function AddressBook({ doctorId }: { doctorId: string }) {
                       <button
                         type="button"
                         onClick={() => setPreferred(a.id)}
+                        data-intent="address_set_preferred"
                         disabled={busyId === a.id}
                         className="text-primary hover:text-primary/80 text-sm font-medium disabled:opacity-60"
                       >
@@ -224,6 +227,7 @@ export default function AddressBook({ doctorId }: { doctorId: string }) {
                     <button
                       type="button"
                       onClick={() => startEdit(a)}
+                      data-intent="address_edit_start"
                       className="text-gray-600 hover:text-gray-800 text-sm font-medium"
                     >
                       Edit
@@ -231,6 +235,7 @@ export default function AddressBook({ doctorId }: { doctorId: string }) {
                     <button
                       type="button"
                       onClick={() => remove(a.id)}
+                      data-intent="address_remove"
                       disabled={busyId === a.id}
                       className="text-red-600 hover:text-red-800 text-sm font-medium disabled:opacity-60"
                       aria-label="Delete address"
@@ -266,6 +271,7 @@ export default function AddressBook({ doctorId }: { doctorId: string }) {
         />
         <button
           type="submit"
+          data-intent="address_add"
           disabled={adding || !newAddress.trim()}
           className="btn-primary px-5 py-2 text-sm disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap"
         >

@@ -187,6 +187,7 @@ export default function TelemetryViewer() {
                   <li key={s.sid}>
                     <button
                       onClick={() => loadEvents(s.sid)}
+                      data-intent="telemetry_session_open"
                       className={`w-full text-left px-4 py-3 transition-colors ${sid === s.sid ? 'bg-primary/5 border-l-2 border-primary' : 'hover:bg-slate-50 border-l-2 border-transparent'}`}
                     >
                       <div className="text-sm font-medium text-slate-800">{fmtTime(s.startT)}</div>
@@ -220,7 +221,7 @@ export default function TelemetryViewer() {
                 <div className="text-sm font-semibold text-slate-800">Session {sid.slice(0, 8)}…</div>
                 <div className="text-xs text-slate-500">{events.length} events</div>
               </div>
-              <button onClick={copySteps} className="shrink-0 text-xs font-medium px-2.5 py-1.5 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50">
+              <button onClick={copySteps} data-intent="telemetry_copy_steps" className="shrink-0 text-xs font-medium px-2.5 py-1.5 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50">
                 Copy steps
               </button>
             </div>

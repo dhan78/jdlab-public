@@ -1,5 +1,6 @@
 import PortalAdminForm from '@/components/PortalAdminForm'
 import SlaSettingsForm from '@/components/SlaSettingsForm'
+import DemoSettingsForm from '@/components/DemoSettingsForm'
 
 export const metadata = {
   title: 'Admin — JD Dental Lab Portal',
@@ -25,6 +26,15 @@ export default function PortalAdminPage() {
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
           <SlaSettingsForm />
+        </div>
+
+        <div className="mt-10 mb-6">
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">Public demo case</h2>
+          <p className="text-gray-500">Publish one anonymized case as a read-only 3D preview for meetups/QR codes.</p>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+          <DemoSettingsForm />
         </div>
 
         <div className="mt-10">

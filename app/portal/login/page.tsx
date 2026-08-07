@@ -1,12 +1,22 @@
 import { Suspense } from 'react'
+import { cookies } from 'next/headers'
+import { redirect } from 'next/navigation'
 import Logo from '@/components/Logo'
 import PortalLoginForm from '@/components/PortalLoginForm'
+import { verifySessionToken } from '@/lib/portal-auth'
 
 export const metadata = {
   title: 'Doctor Portal Login — JD Dental Lab',
 }
 
-export default function PortalLoginPage() {
+export default async function PortalLoginPage() {
+  // Already signed in? Skip the login form and go straight to the cases list,
+  // so clicking "Doctor Login" during an active session lands on the portal.
+  const token = (await cookies()).get('portal-session')?.value
+  if (token && (await verifySessionToken(token))) {
+    redirect('/portal')
+  }
+
   return (
     <div className="min-h-screen bg-light flex items-center justify-center px-4 py-16">
       <div className="w-full max-w-md">

@@ -16,13 +16,17 @@
  */
 import { useEffect, useRef, useState } from 'react'
 
-export default function HtmlViewer({ dataUrl, className, onError }: { dataUrl: string; className?: string; onError?: (detail: string) => void }) {
+export default function HtmlViewer({ dataUrl, className, onError, onLoad }: { dataUrl: string; className?: string; onError?: (detail: string) => void; onLoad?: () => void }) {
   const [src, setSrc] = useState<string | null>(null)
   const [error, setError] = useState(false)
   const onErrorRef = useRef(onError)
   useEffect(() => {
     onErrorRef.current = onError
   }, [onError])
+  const onLoadRef = useRef(onLoad)
+  useEffect(() => {
+    onLoadRef.current = onLoad
+  }, [onLoad])
 
   useEffect(() => {
     let objectUrl: string | null = null
@@ -78,6 +82,7 @@ export default function HtmlViewer({ dataUrl, className, onError }: { dataUrl: s
       sandbox="allow-scripts"
       referrerPolicy="no-referrer"
       loading="lazy"
+      onLoad={() => onLoadRef.current?.()}
     />
   )
 }
