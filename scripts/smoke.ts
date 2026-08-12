@@ -24,24 +24,45 @@ const FIREHOSE = process.env.TELEMETRY_FIREHOSE_STREAM
 
 let pass = 0
 let fail = 0
-let skip = 0
 const failed: string[] = []
+const skipped: string[] = [] // "<test> — <reason>" lines for the summary
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg)
 }
 
-async function check(name: string, fn: () => Promise<void | 'skip'>): Promise<void> {
+// Skip-with-reason (pytest.skip / t.Skip style): a test whose precondition
+// isn't present in THIS environment is reported SKIPPED, not failed — with a
+// reason so it's clear what's missing. Signal it either way:
+//   return skip('why')   — explicit, from inside a guard
+//   assume(cond, 'why')  — JUnit-style: skip unless cond holds
+type SkipResult = { readonly __skip: string }
+class SkipSignal extends Error {
+  constructor(public reason: string) { super(reason) }
+}
+function skip(reason: string): SkipResult { return { __skip: reason } }
+function assume(cond: unknown, reason: string): asserts cond {
+  if (!cond) throw new SkipSignal(reason)
+}
+function isSkipResult(r: unknown): r is SkipResult {
+  return typeof r === 'object' && r !== null && '__skip' in r
+}
+
+async function check(name: string, fn: () => Promise<void | 'skip' | SkipResult>): Promise<void> {
+  const markSkip = (reason: string) => {
+    skipped.push(reason ? `${name} — ${reason}` : name)
+    console.log(`  \u26a0\ufe0f  SKIP  ${name}${reason ? `  \u2014 ${reason}` : ''}`)
+  }
   try {
     const r = await fn()
-    if (r === 'skip') {
-      skip++
-      console.log(`  \u26a0\ufe0f  SKIP  ${name}`)
-    } else {
+    if (r === 'skip') markSkip('')
+    else if (isSkipResult(r)) markSkip(r.__skip)
+    else {
       pass++
       console.log(`  \u2705 PASS  ${name}`)
     }
   } catch (e) {
+    if (e instanceof SkipSignal) { markSkip(e.reason); return }
     fail++
     failed.push(name)
     console.log(`  \u274c FAIL  ${name}\n            ${(e as Error).message}`)
@@ -109,18 +130,33 @@ async function main() {
     process.exit(2)
   }
 
+  // DB health + planner session in ONE login (reused below, so we stay within
+  // the login rate limit of 5/min/IP). The login PAGE renders even with the DB
+  // down, so probe the login API: a 5xx = server up but Postgres down/unseeded.
+  let plannerCookie: string | null = null
+  {
+    const probe = await http('/api/portal/login', { method: 'POST', body: { email: 'planner@jdlab.us', password: DEMO_PASSWORD } })
+    if (probe.status >= 500) {
+      console.error(
+        `\nServer is up but the DATABASE looks down or unseeded (login API → ${probe.status}).\n` +
+          `Start Postgres (or the db container), then: npm run db:migrate && npm run db:seed — and retry.\n`,
+      )
+      process.exit(3)
+    }
+    const m = /portal-session=([^;]+)/.exec(probe.headers.get('set-cookie') ?? '')
+    plannerCookie = m ? `portal-session=${m[1]}` : null
+  }
+
   // ---- Auth ----------------------------------------------------------------
   console.log('Auth')
   await check('login with valid planner credentials returns a session cookie', async () => {
-    const c = await login('planner@jdlab.us', DEMO_PASSWORD)
-    assert(c, 'no portal-session cookie returned')
+    assert(plannerCookie, 'no portal-session cookie returned')
   })
   await check('login with wrong password is rejected', async () => {
     const res = await http('/api/portal/login', { method: 'POST', body: { email: 'planner@jdlab.us', password: 'wrong-password' } })
     assert([400, 401].includes(res.status), `expected 400/401, got ${res.status}`)
   })
 
-  const plannerCookie = await login('planner@jdlab.us', DEMO_PASSWORD)
   assert(plannerCookie, 'FATAL: cannot log in as planner — is the DB seeded? (npm run db:seed)')
   const adminCookie = await login(ADMIN_EMAIL, ADMIN_PASSWORD)
 
@@ -174,21 +210,21 @@ async function main() {
   await check('admin-only /doctors: admin → 200, planner → 403', async () => {
     const asPlanner = await http('/api/portal/doctors', { cookie: plannerCookie })
     assert(asPlanner.status === 403, `planner expected 403, got ${asPlanner.status}`)
-    if (!adminCookie) return 'skip'
+    if (!adminCookie) return skip('admin login unavailable (ADMIN_EMAIL/PASSWORD unset or not seeded)')
     const asAdmin = await http('/api/portal/doctors', { cookie: adminCookie })
     assert(asAdmin.status === 200, `admin expected 200, got ${asAdmin.status}`)
   })
   await check('doctor sees only their own cases', async () => {
-    if (!doctorCookie) return 'skip'
+    assume(doctorCookie, 'no seed doctor could log in (is the DB seeded?)')
     const res = await http('/api/portal/cases', { cookie: doctorCookie })
     const list: Array<{ doctorId: string }> = res.json?.cases ?? []
     assert(res.status === 200, `status ${res.status}`)
     assert(list.every(c => String(c.doctorId) === String(doctorCase.doctorId)), 'doctor saw a case they do not own')
   })
   await check("doctor cannot open another doctor's case → 403", async () => {
-    if (!doctorCookie) return 'skip'
+    assume(doctorCookie, 'no seed doctor could log in (is the DB seeded?)')
     const other = allCases.find(c => String(c.doctorId) !== String(doctorCase.doctorId))
-    if (!other) return 'skip'
+    if (!other) return skip("no second doctor's case available to test cross-doctor access")
     const res = await http(`/api/portal/cases/${other.id}`, { cookie: doctorCookie })
     assert(res.status === 403, `expected 403, got ${res.status}`)
   })
@@ -196,7 +232,7 @@ async function main() {
   // ---- Status-change authorization ----------------------------------------
   console.log('\nStatus-change authorization')
   await check('doctor cannot change case status → 403', async () => {
-    if (!doctorCookie) return 'skip'
+    assume(doctorCookie, 'no seed doctor could log in (is the DB seeded?)')
     const res = await http(`/api/portal/cases/${doctorCase.id}`, { method: 'PATCH', cookie: doctorCookie, body: { status: doctorCase.status } })
     assert(res.status === 403, `expected 403, got ${res.status}`)
   })
@@ -237,7 +273,7 @@ async function main() {
   console.log('\nUploads')
   await check('presign returns 501 when S3 is disabled (base64 fallback path)', async () => {
     const res = await http(`/api/portal/cases/${doctorCase.id}/attachments/presign`, { method: 'POST', cookie: plannerCookie, body: { name: 'test.log', mimeType: '', size: 18 } })
-    if (res.status === 200) return 'skip' // S3 IS configured in this env — fallback not exercised
+    if (res.status === 200) return skip('S3 is configured here - base64 fallback not exercised')
     assert(res.status === 501, `expected 501 (or 200 if S3 on), got ${res.status}`)
   })
   await check('base64 .log attachment (text/plain) → 201', async () => {
@@ -291,14 +327,14 @@ async function main() {
     assert(res.status === 404, `expected 404, got ${res.status}`)
   })
   await check("doctor cannot pin another doctor's case → 403", async () => {
-    if (!doctorCookie) return 'skip'
+    assume(doctorCookie, 'no seed doctor could log in (is the DB seeded?)')
     const other = allCases.find(c => String(c.doctorId) !== String(doctorCase.doctorId))
-    if (!other) return 'skip'
+    if (!other) return skip("no second doctor's case available to test cross-doctor access")
     const res = await http(`/api/portal/cases/${other.id}/pin`, { method: 'POST', cookie: doctorCookie })
     assert(res.status === 403, `expected 403, got ${res.status}`)
   })
   await check('pins are per-user: planner pin does not change the doctor list', async () => {
-    if (!doctorCookie) return 'skip'
+    assume(doctorCookie, 'no seed doctor could log in (is the DB seeded?)')
     const doctorPinned = async () => {
       const r = await http('/api/portal/cases', { cookie: doctorCookie })
       return !!(r.json?.cases ?? []).find((c: { id: string; pinned?: boolean }) => c.id === doctorCase.id)?.pinned
@@ -372,19 +408,19 @@ async function main() {
   })
   await check('pin on an attachment not in this case → 404', async () => {
     const other = allCases.find(c => c.id !== doctorCase.id)
-    if (!other) return 'skip'
+    if (!other) return skip('no second case exists to test the wrong-case path')
     const res = await http(`/api/portal/cases/${other.id}/annotations`, { method: 'POST', cookie: plannerCookie, body: { attachmentId: modelAttachmentId, x: 0, y: 0, z: 0, body: 'wrong case' } })
     assert(res.status === 404, `expected 404, got ${res.status}`)
   })
   await check("doctor cannot annotate another doctor's case → 403", async () => {
-    if (!doctorCookie) return 'skip'
+    assume(doctorCookie, 'no seed doctor could log in (is the DB seeded?)')
     const other = allCases.find(c => String(c.doctorId) !== String(doctorCase.doctorId))
-    if (!other) return 'skip'
+    if (!other) return skip("no second doctor's case available to test cross-doctor access")
     const res = await http(`/api/portal/cases/${other.id}/annotations`, { method: 'POST', cookie: doctorCookie, body: { attachmentId: modelAttachmentId, x: 0, y: 0, z: 0, body: 'nope' } })
     assert(res.status === 403, `expected 403, got ${res.status}`)
   })
   await check('delete a pin → 200 and it is gone; deleting again → 404', async () => {
-    if (!createdAnnotationId) return 'skip'
+    if (!createdAnnotationId) return skip('the create-a-pin test did not produce an annotation id')
     const del = await http(`/api/portal/cases/${doctorCase.id}/annotations/${createdAnnotationId}`, { method: 'DELETE', cookie: plannerCookie })
     assert(del.status === 200, `status ${del.status}: ${del.text}`)
     const list = await http(`/api/portal/cases/${doctorCase.id}/annotations`, { cookie: plannerCookie })
@@ -397,7 +433,7 @@ async function main() {
   // ---- Notifications lifecycle --------------------------------------------
   console.log('\nNotifications')
   await check('lab message notifies the doctor; title = CASE TITLE (not DL-####)', async () => {
-    if (!doctorCookie) return 'skip'
+    assume(doctorCookie, 'no seed doctor could log in (is the DB seeded?)')
     const before = await http('/api/portal/notifications', { cookie: doctorCookie })
     const beforeCount = before.json?.unreadCount ?? 0
     const post = await http(`/api/portal/cases/${doctorCase.id}/messages`, { method: 'POST', cookie: plannerCookie, body: { body: 'smoke: planner → doctor' } })
@@ -410,7 +446,7 @@ async function main() {
     assert(!/^DL-\d+/.test(items[0]?.title ?? ''), 'title still leads with the DL-#### code')
   })
   await check('doctor message notifies the lab team (planner)', async () => {
-    if (!doctorCookie) return 'skip'
+    assume(doctorCookie, 'no seed doctor could log in (is the DB seeded?)')
     const before = await http('/api/portal/notifications', { cookie: plannerCookie })
     const beforeCount = before.json?.unreadCount ?? 0
     const post = await http(`/api/portal/cases/${doctorCase.id}/messages`, { method: 'POST', cookie: doctorCookie, body: { body: 'smoke: doctor → lab' } })
@@ -420,7 +456,7 @@ async function main() {
     assert((after.json?.unreadCount ?? 0) > beforeCount, 'planner unread did not increase after doctor message')
   })
   await check('status change notifies the doctor with a "Status:" body', async () => {
-    if (!doctorCookie) return 'skip'
+    assume(doctorCookie, 'no seed doctor could log in (is the DB seeded?)')
     await http(`/api/portal/cases/${doctorCase.id}`, { method: 'PATCH', cookie: plannerCookie, body: { status: doctorCase.status } })
     await delay(500)
     const after = await http('/api/portal/notifications', { cookie: doctorCookie })
@@ -428,10 +464,10 @@ async function main() {
     assert(items.some(i => /^Status:/.test(i.body)), 'no "Status:" notification found for the doctor')
   })
   await check('mark one notification read decrements unread', async () => {
-    if (!doctorCookie) return 'skip'
+    assume(doctorCookie, 'no seed doctor could log in (is the DB seeded?)')
     const list = await http('/api/portal/notifications', { cookie: doctorCookie })
     const unread = (list.json?.items ?? []).find((i: { read: boolean }) => !i.read)
-    if (!unread) return 'skip'
+    if (!unread) return skip('no unread notification available to mark read')
     const before = list.json?.unreadCount ?? 0
     const res = await http('/api/portal/notifications/read', { method: 'POST', cookie: doctorCookie, body: { id: unread.id } })
     assert(res.status === 200, `read ${res.status}`)
@@ -440,14 +476,14 @@ async function main() {
     assert((after.json?.unreadCount ?? 0) < before, 'unread did not decrease')
   })
   await check('mark all read → unreadCount 0', async () => {
-    if (!doctorCookie) return 'skip'
+    assume(doctorCookie, 'no seed doctor could log in (is the DB seeded?)')
     await http('/api/portal/notifications/read', { method: 'POST', cookie: doctorCookie, body: {} })
     await delay(200)
     const after = await http('/api/portal/notifications', { cookie: doctorCookie })
     assert((after.json?.unreadCount ?? 0) === 0, `unread is ${after.json?.unreadCount}, expected 0`)
   })
   await check('clear all → no items remain', async () => {
-    if (!doctorCookie) return 'skip'
+    assume(doctorCookie, 'no seed doctor could log in (is the DB seeded?)')
     await http('/api/portal/notifications/clear', { method: 'POST', cookie: doctorCookie })
     await delay(200)
     const after = await http('/api/portal/notifications', { cookie: doctorCookie })
@@ -458,14 +494,14 @@ async function main() {
   console.log('\nWeb push')
   await check('subscribe with a malformed body → 400 (push enabled)', async () => {
     const res = await http('/api/portal/push/subscribe', { method: 'POST', cookie: plannerCookie, body: {} })
-    if (res.status === 501) return 'skip' // push not configured in this env
+    if (res.status === 501) return skip('web push not configured (VAPID keys unset)') // push not configured in this env
     assert(res.status === 400, `expected 400, got ${res.status}`)
   })
   await check('subscribe + unsubscribe a (fake) subscription → 200 / 200', async () => {
     const endpoint = `https://smoke.example/ep-${Date.now()}`
     const sub = { endpoint, keys: { p256dh: 'BOguzZ_smoke_key_p256dh_placeholder', auth: 'c21va2VfYXV0aA' } }
     const res = await http('/api/portal/push/subscribe', { method: 'POST', cookie: plannerCookie, body: sub })
-    if (res.status === 501) return 'skip'
+    if (res.status === 501) return skip('web push not configured (VAPID keys unset)')
     assert(res.status === 200, `subscribe ${res.status}`)
     const un = await http('/api/portal/push/unsubscribe', { method: 'POST', cookie: plannerCookie, body: { endpoint } })
     assert(un.status === 200, `unsubscribe ${un.status}`)
@@ -486,7 +522,7 @@ async function main() {
     assert(ct.includes('text/event-stream'), `content-type "${ct}"`)
   })
   await check('status change is delivered as an SSE "update" event (powers the live sidebar/thread)', async () => {
-    if (!doctorCookie) return 'skip'
+    assume(doctorCookie, 'no seed doctor could log in (is the DB seeded?)')
     // Open the OWNER's stream (a doctor only receives events for their own cases,
     // so this also exercises the role scoping). Then change the status as the
     // PLANNER — the cross-user path the live progress bar relies on.
@@ -522,7 +558,7 @@ async function main() {
   // ---- Error flagging (client_error → telemetry, flagged kind:error) -------
   console.log('\nError flagging')
   await check('client_error event is accepted and flagged kind:"error" in the sink', async () => {
-    if (FIREHOSE) return 'skip' // ships to Firehose, not the local file
+    if (FIREHOSE) return skip('telemetry ships to Firehose, not the local NDJSON file')
     const marker = `SMOKE-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const res = await http('/api/portal/telemetry', {
       method: 'POST',
@@ -543,13 +579,21 @@ async function main() {
 
   // ---- Summary -------------------------------------------------------------
   console.log(`\n${'-'.repeat(48)}`)
-  console.log(`  ${pass} passed   ${fail} failed   ${skip} skipped`)
+  console.log(`  ${pass} passed   ${fail} failed   ${skipped.length} skipped`)
   if (fail > 0) console.log(`  failing: ${failed.join(', ')}`)
+  if (skipped.length > 0) {
+    console.log('  skipped (precondition not met):')
+    for (const s of skipped) console.log(`    - ${s}`)
+  }
   console.log('')
   process.exit(fail > 0 ? 1 : 0)
 }
 
 main().catch(e => {
-  console.error('smoke runner crashed:', e)
+  const msg = e instanceof Error ? e.message : String(e)
+  // FATAL asserts (bad env / unseeded DB) are user-actionable — show the
+  // message, not a stack trace. Anything else is a genuine runner bug.
+  if (msg.startsWith('FATAL')) console.error(`\n${msg}\n`)
+  else console.error('smoke runner crashed:', e)
   process.exit(2)
 })

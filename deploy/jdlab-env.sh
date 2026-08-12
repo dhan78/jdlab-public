@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Resolve AWS SSM parameters into per-service env files for docker compose.
 # Runs on the HOST (which has the AWS CLI + the EC2 instance role via IMDS).
-# Writes to /run/jdlab (tmpfs = RAM, wiped on reboot), files mode 0600 (root only).
+# Writes to /home/ec2-user/temp (on disk; persists across reboots), dir 0700 / files 0600.
 # No secrets are printed; values are written literally (no eval -> no injection).
 #
 # Usage:  sudo ./jdlab-env.sh  &&  docker compose -f docker-compose.prod.yml up -d
 set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
-DIR="${JDLAB_ENV_DIR:-/run/jdlab}"
+DIR="${JDLAB_ENV_DIR:-/home/ec2-user/temp}"
 install -d -m 700 "$DIR"
 
 render() {  # $1 = SSM path prefix (trailing slash), $2 = output file
@@ -30,5 +30,6 @@ render "/jdlab/"          "$DIR/nextjs.env"
 render "/jdlab/db/"       "$DIR/db.env"
 render "/jdlab/prostore/" "$DIR/prostore.env"
 render "/jdlab/outline/"  "$DIR/outline.env"
+render "/jdlab/ingestion/" "$DIR/ingestion.env"   # scan ingestion worker (INGEST_API_TOKEN must ALSO be under /jdlab/ for nextjs)
 
 echo "SSM parameters loaded into $DIR"

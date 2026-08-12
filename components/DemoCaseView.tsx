@@ -8,6 +8,7 @@
  * fetched server-side and passed in as plain props; this component never calls a
  * portal API, so an anonymous visitor can look but cannot touch anything.
  */
+import { useState } from 'react'
 import dynamic from 'next/dynamic'
 import type { ScanAnnotation } from './ScanViewer'
 
@@ -46,6 +47,9 @@ export default function DemoCaseView({
   turnaround,
   models,
 }: DemoCaseViewProps) {
+  // CSS-overlay "maximize" (not the native Fullscreen API, which iOS Safari
+  // blocks on non-<video> elements) so the 3D scan can go full-window on a phone.
+  const [maximized, setMaximized] = useState<DemoModel | null>(null)
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Demo banner */}
@@ -92,16 +96,26 @@ export default function DemoCaseView({
           <div className="space-y-6">
             {models.map(m => (
               <div key={m.id}>
-                <div className="h-[28rem] w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
+                <div className="group relative h-[28rem] w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
                   <ScanViewer
                     url={m.dataUrl}
                     className="h-full w-full"
+                    viewKey={`demo:${m.id}`}
                     annotations={m.annotations}
                     readOnly
                   />
+                  <button
+                    type="button"
+                    onClick={() => setMaximized(m)}
+                    title="Expand to full screen"
+                    aria-label="Expand to full screen"
+                    className="absolute right-2 top-2 rounded-lg bg-black/40 p-2 text-white/90 backdrop-blur-sm transition hover:bg-black/60"
+                  >
+                    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4" /></svg>
+                  </button>
                 </div>
                 <p className="mt-1.5 text-xs text-slate-500">
-                  {m.name}
+                  {m.name.replace(/\.[^./\\]+$/, '')}
                   {m.annotations.length > 0 && (
                     <span> · {m.annotations.length} lab annotation{m.annotations.length === 1 ? '' : 's'} — click a marker to read the note</span>
                   )}
@@ -124,6 +138,28 @@ export default function DemoCaseView({
           </a>
         </div>
       </div>
+
+      {/* Full-window viewer (CSS overlay — works on mobile). */}
+      {maximized && (
+        <div className="fixed inset-0 z-50 bg-slate-900">
+          <ScanViewer
+            url={maximized.dataUrl}
+            className="h-full w-full"
+            viewKey={`demo:${maximized.id}`}
+            annotations={maximized.annotations}
+            readOnly
+          />
+          <button
+            type="button"
+            onClick={() => setMaximized(null)}
+            aria-label="Close full screen"
+            className="absolute right-3 top-3 inline-flex items-center gap-1.5 rounded-lg bg-black/50 px-3 py-2 text-sm font-medium text-white backdrop-blur-sm transition hover:bg-black/70"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+            Close
+          </button>
+        </div>
+      )}
     </div>
   )
 }

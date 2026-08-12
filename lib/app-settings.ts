@@ -6,7 +6,7 @@
  */
 import { db } from './db'
 import { appSettings } from './db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, like } from 'drizzle-orm'
 
 export async function getSetting(key: string): Promise<string | null> {
   const rows = await db.select().from(appSettings).where(eq(appSettings.key, key)).limit(1)
@@ -21,4 +21,17 @@ export async function setSetting(key: string, value: string): Promise<void> {
       target: appSettings.key,
       set: { value, updatedAt: new Date() },
     })
+}
+
+export async function deleteSetting(key: string): Promise<void> {
+  await db.delete(appSettings).where(eq(appSettings.key, key))
+}
+
+// All settings whose key starts with `prefix`, as a [key, value] list.
+export async function listSettings(prefix: string): Promise<Array<{ key: string; value: string }>> {
+  const rows = await db
+    .select()
+    .from(appSettings)
+    .where(like(appSettings.key, `${prefix}%`))
+  return rows.map(r => ({ key: r.key, value: r.value }))
 }

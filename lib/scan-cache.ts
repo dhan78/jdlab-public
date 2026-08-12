@@ -21,7 +21,7 @@
  * Browser-only module — safe to import from a 'use client' component.
  */
 
-const CACHE_NAME = 'jdlab-scan-bytes-v1'
+const CACHE_NAME = 'jdlab-scan-bytes-v2'
 
 // Tunable caps. The in-memory byte tier is kept small on purpose — the parsed
 // scene cache (in ScanViewer) is the within-session workhorse; this tier mainly

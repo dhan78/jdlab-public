@@ -26,6 +26,7 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { NeutralToneMapping, Vector3 } from 'three'
 import type { BufferGeometry, Group } from 'three'
 import { scanCacheKey, getScanBytes, putScanBytes } from '@/lib/scan-cache'
+import { loadScanView, saveScanView, clearScanView } from '@/lib/scan-view-state'
 
 // A 3D surface pin the doctor or lab drops on the scan. Coordinates are in the
 // centered-geometry local space (see the store), so they re-anchor on reload.
@@ -54,8 +55,10 @@ interface ScanViewerProps {
   /** Called with a short detail when the model fails to load/parse, so the
    *  caller can capture it into telemetry (the viewer only shows a banner). */
   onError?: (detail: string) => void
-  /** Called once the model successfully parses/renders (viewing activity). */
-  onLoad?: () => void
+  /** Called once the model successfully parses/renders (viewing activity).
+   *  `source` reports which tier served it: 'parsed' | 'bytes' | 'network' |
+   *  'file' — for cache-hit-rate telemetry. */
+  onLoad?: (source?: string) => void
   /** Existing pins to render on the model. */
   annotations?: ScanAnnotation[]
   /** Create a pin, or a measurement (kind='measure' with a second point B).
@@ -70,6 +73,10 @@ interface ScanViewerProps {
    *  authoring controls (used by the public /demo surface). Belt-and-suspenders
    *  on top of simply not passing the create/delete callbacks. */
   readOnly?: boolean
+  /** Stable per-scan id. When set, the camera pan/zoom/orbit is remembered for
+   *  this scan (localStorage) and restored on return — across navigation AND
+   *  page reloads — instead of resetting to the framed default. */
+  viewKey?: string
 }
 
 // Parse an STL or PLY ArrayBuffer into a centered, normalized geometry. The
@@ -331,14 +338,95 @@ function FrameOnChange({ signal }: { signal: unknown }) {
   return null
 }
 
-// Frames the model ONCE per loaded scene, then never again — so re-renders from
-// toggling measure / adding a pin don't reset the user's orbit/pan/zoom. (drei's
-// `<Bounds fit observe>` refits on every render, which caused the view to reset.)
-function FitOnce({ scene }: { scene: Group }) {
+// Minimal shape of the (OrbitControls) default controls we read/write.
+type ControlsLike = {
+  target: Vector3
+  update?: () => void
+  addEventListener?: (type: string, fn: () => void) => void
+  removeEventListener?: (type: string, fn: () => void) => void
+}
+
+// GLB branch: on mount (per scene) RESTORE the saved camera view for this scan
+// if one exists, otherwise FRAME the model once. `resetNonce` bumps to force a
+// re-frame from the "Reset view" button. Never re-fits on ordinary re-renders,
+// so toggling measure / placing a pin doesn't disturb the user's orbit/pan/zoom.
+function RestoreOrFit({
+  scene,
+  viewKey,
+  resetNonce,
+}: {
+  scene: Group
+  viewKey?: string
+  resetNonce: number
+}) {
   const bounds = useBounds()
+  const camera = useThree(s => s.camera)
+  const controls = useThree(s => s.controls) as ControlsLike | null
+  const invalidate = useThree(s => s.invalidate)
   useEffect(() => {
-    bounds.refresh().clip().fit()
-  }, [bounds, scene])
+    const saved = viewKey ? loadScanView(viewKey) : null
+    if (saved) {
+      if (!controls?.target) return // wait for controls, then restore (no fit flicker)
+      camera.position.set(saved.pos[0], saved.pos[1], saved.pos[2])
+      controls.target.set(saved.target[0], saved.target[1], saved.target[2])
+      controls.update?.()
+      invalidate()
+    } else {
+      bounds.refresh().clip().fit()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scene, viewKey, resetNonce, controls])
+  return null
+}
+
+// STL/PLY branch: the model is scaled to the fixed camera, so there's no Bounds
+// fit — instead restore the saved view if present, else reset to the default
+// framing (also used by "Reset view").
+function RestoreView({
+  signal,
+  viewKey,
+  resetNonce,
+}: {
+  signal: unknown
+  viewKey?: string
+  resetNonce: number
+}) {
+  const camera = useThree(s => s.camera)
+  const controls = useThree(s => s.controls) as ControlsLike | null
+  const invalidate = useThree(s => s.invalidate)
+  useEffect(() => {
+    if (!controls?.target) return
+    const saved = viewKey ? loadScanView(viewKey) : null
+    if (saved) {
+      camera.position.set(saved.pos[0], saved.pos[1], saved.pos[2])
+      controls.target.set(saved.target[0], saved.target[1], saved.target[2])
+    } else {
+      camera.position.set(0, 0, 3)
+      controls.target.set(0, 0, 0)
+    }
+    controls.update?.()
+    invalidate()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signal, viewKey, resetNonce, controls])
+  return null
+}
+
+// Persist the camera view whenever the user finishes an orbit/pan/zoom, keyed by
+// the scan's stable id — so it survives navigation AND reloads (localStorage).
+function ViewSaver({ viewKey, enabled }: { viewKey?: string; enabled: boolean }) {
+  const camera = useThree(s => s.camera)
+  const controls = useThree(s => s.controls) as ControlsLike | null
+  useEffect(() => {
+    if (!viewKey || !enabled || !controls?.addEventListener || !controls.target) return
+    const onEnd = () => {
+      saveScanView(viewKey, {
+        pos: [camera.position.x, camera.position.y, camera.position.z],
+        target: [controls.target.x, controls.target.y, controls.target.z],
+      })
+    }
+    controls.addEventListener('end', onEnd)
+    return () => controls.removeEventListener?.('end', onEnd)
+  }, [viewKey, enabled, controls, camera])
   return null
 }
 
@@ -363,6 +451,8 @@ function GlbScene({
   onSaveMeasure,
   onCancelMeasure,
   onDelete,
+  viewKey,
+  resetNonce,
 }: {
   scene: Group
   annotations: ScanAnnotation[]
@@ -380,6 +470,8 @@ function GlbScene({
   onSaveMeasure: (body: string) => void
   onCancelMeasure: () => void
   onDelete?: (id: string) => void
+  viewKey?: string
+  resetNonce: number
 }) {
   const interactive = addMode || measureMode
   // Screen coords at pointer-down, to tell a tap (place a point) from a drag (orbit).
@@ -389,11 +481,12 @@ function GlbScene({
 
   return (
     <>
-      {/* Frame the model ONCE per scene (via FitOnce) — NOT on every render, so
-          toggling measure / placing a pin never resets the user's orbit/pan. The
-          geometry is NOT rescaled, so world hit points stay in real millimetres. */}
+      {/* Restore this scan's saved view if present, else frame ONCE per scene
+          (never on every render, so toggling measure / placing a pin doesn't
+          reset the user's orbit/pan/zoom). Geometry is NOT rescaled, so world
+          hit points stay in real millimetres. */}
       <Bounds clip margin={1.2}>
-        <FitOnce scene={scene} />
+        <RestoreOrFit scene={scene} viewKey={viewKey} resetNonce={resetNonce} />
         <primitive
           object={scene}
           onPointerDown={(e: { nativeEvent: PointerEvent }) => {
@@ -642,6 +735,7 @@ export default function ScanViewer({
   onCreateAnnotation,
   onDeleteAnnotation,
   readOnly = false,
+  viewKey,
 }: ScanViewerProps) {
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null)
   const [scene, setScene] = useState<Group | null>(null)
@@ -657,6 +751,8 @@ export default function ScanViewer({
   // measurement awaiting an optional note + Save (persisted, shared with both).
   const [pendingPoint, setPendingPoint] = useState<Vector3 | null>(null)
   const [pendingMeasure, setPendingMeasure] = useState<{ a: Vector3; b: Vector3 } | null>(null)
+  // Bumped by "Reset view" to force a re-frame (and clear the saved camera).
+  const [resetNonce, setResetNonce] = useState(0)
   const pins = annotations ?? []
   // Any authoring (pins AND the measure tool, which persists via onCreateAnnotation)
   // requires a create callback and a non-read-only viewer.
@@ -688,7 +784,12 @@ export default function ScanViewer({
         // Scans are served via presigned S3 URLs whose signature rotates each
         // load, so the browser HTTP cache never hits. Cache by the STABLE object
         // path (query stripped): parsed-scene cache → byte cache → network.
-        const key = url && !file ? scanCacheKey(url) : null
+        //
+        // NEVER cache `data:` URLs: they're already local bytes (no download to
+        // save) and their "stable path" key would be the entire multi-MB base64
+        // blob — which collides/breaks in the byte + Cache-Storage tiers and made
+        // every viewer render the FIRST cached scan. Uncacheable → decode fresh.
+        const key = url && !file && !url.startsWith('data:') ? scanCacheKey(url) : null
 
         // Tier 0: already-parsed in this session → clone and show instantly
         // (skips both the network AND the Meshopt/STL decode).
@@ -699,19 +800,22 @@ export default function ScanViewer({
             if (parsed.kind === 'glb') setScene(parsed.scene.clone(true) as Group)
             else setGeometry(parsed.geometry.clone())
             setLoading(false)
-            onLoadRef.current?.()
+            onLoadRef.current?.('parsed')
             return
           }
         }
 
         let buffer: ArrayBuffer
+        let byteSource: 'file' | 'bytes' | 'network' = 'network'
         if (file) {
           buffer = await file.arrayBuffer()
+          byteSource = 'file'
         } else {
           // Tier 1/2: cached bytes (memory → Cache Storage), else fetch from S3.
           const cachedBytes = key ? await getScanBytes(key) : null
           if (cachedBytes) {
             buffer = cachedBytes
+            byteSource = 'bytes'
           } else {
             // Distinguish a blocked/denied S3 GET (CORS/403) from a bad file: a
             // failed fetch throws, a non-2xx gives a clear `fetch <status>`.
@@ -736,7 +840,7 @@ export default function ScanViewer({
             if (key) parsedPut(key, { kind: 'glb', scene: gltf.scene })
             setScene(gltf.scene.clone(true) as Group)
             setLoading(false)
-            onLoadRef.current?.()
+            onLoadRef.current?.(byteSource)
           } catch (err) {
             if (cancelled) return
             setError('Could not load or parse this 3D model.')
@@ -750,7 +854,7 @@ export default function ScanViewer({
           if (key) parsedPut(key, { kind: 'mesh', geometry: geo })
           setGeometry(geo.clone())
           setLoading(false)
-          onLoadRef.current?.()
+          onLoadRef.current?.(byteSource)
         }
       } catch (e) {
         if (!cancelled) {
@@ -776,6 +880,8 @@ export default function ScanViewer({
         <directionalLight position={[-4, -3, -5]} intensity={0.35} />
         {scene && <hemisphereLight args={['#ffffff', '#3a3a3a', 0.6]} />}
         {geometry && (
+          <>
+          <RestoreView signal={geometry} viewKey={viewKey} resetNonce={resetNonce} />
           <Scene
             geometry={geometry}
             annotations={pins.filter(a => a.kind !== 'measure')}
@@ -803,11 +909,14 @@ export default function ScanViewer({
                 : undefined
             }
           />
+          </>
         )}
         {scene && (
           <>
             <GlbScene
               scene={scene}
+              viewKey={viewKey}
+              resetNonce={resetNonce}
               annotations={pins}
               addMode={addMode}
               measureMode={measureMode}
@@ -860,6 +969,7 @@ export default function ScanViewer({
           </>
         )}
         <OrbitControls makeDefault enableDamping={false} enablePan enableZoom enableRotate />
+        <ViewSaver viewKey={viewKey} enabled={!!(geometry || scene)} />
         <FrameOnChange
           signal={`${pins.length}:${addMode}:${draft ? 1 : 0}:${selectedId ?? ''}:${measureMode}:${pendingMeasure ? 1 : 0}:${pendingPoint ? 1 : 0}`}
         />
@@ -932,6 +1042,22 @@ export default function ScanViewer({
             </button>
           )}
         </div>
+      )}
+
+      {/* Reset view — separate corner so it never crowds the pin/measure tools. */}
+      {!error && (geometry || scene) && viewKey && (
+        <button
+          type="button"
+          data-intent="view_reset"
+          onClick={() => {
+            if (viewKey) clearScanView(viewKey)
+            setResetNonce(n => n + 1)
+          }}
+          title="Reset the camera to the default framing"
+          className="absolute bottom-2 right-2 rounded-lg bg-black/40 px-2.5 py-1.5 text-xs text-white/80 backdrop-blur-sm transition hover:bg-black/60"
+        >
+          Reset view
+        </button>
       )}
 
       {loading && <Overlay>Loading scan…</Overlay>}

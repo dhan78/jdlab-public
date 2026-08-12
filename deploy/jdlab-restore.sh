@@ -10,7 +10,7 @@
 # replaced. Requires --yes (or an interactive "yes") to proceed.
 #
 # Usage:
-#   ./jdlab-restore.sh /opt/jdlab/backups/full_backup-YYYY-...-.sql.gz
+#   ./jdlab-restore.sh /home/ec2-user/backups/full_backup-YYYY-...-.sql.gz
 #   ./jdlab-restore.sh s3://your-bucket/prefix/full_backup-YYYY-...-.sql.gz --yes
 #
 # List available S3 backups:

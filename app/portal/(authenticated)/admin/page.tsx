@@ -1,6 +1,7 @@
 import PortalAdminForm from '@/components/PortalAdminForm'
 import SlaSettingsForm from '@/components/SlaSettingsForm'
 import DemoSettingsForm from '@/components/DemoSettingsForm'
+import PracticeMapForm from '@/components/PracticeMapForm'
 
 export const metadata = {
   title: 'Admin — JD Dental Lab Portal',
@@ -35,6 +36,15 @@ export default function PortalAdminPage() {
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
           <DemoSettingsForm />
+        </div>
+
+        <div className="mt-10 mb-6">
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">Scan ingestion — practice routing</h2>
+          <p className="text-gray-500">Map each practice's source key to a doctor so incoming scans auto-assign.</p>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+          <PracticeMapForm />
         </div>
 
         <div className="mt-10">

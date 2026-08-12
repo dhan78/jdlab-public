@@ -192,6 +192,13 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+// Attachment name for DISPLAY only — strip the trailing extension so the thread
+// never advertises the underlying scan/storage format (.glb/.stl/.ply). The
+// `download` attribute keeps the REAL filename so downloaded files still open.
+function displayName(name: string): string {
+  return name.replace(/\.[^./\\]+$/, '')
+}
+
 // Format an ISO date (YYYY-MM-DD) without timezone drift.
 function formatDate(iso: string): string {
   try {
@@ -1132,10 +1139,11 @@ export default function CaseThread({
                               <ScanViewer
                                 url={a.dataUrl}
                                 className="h-full w-full"
+                                viewKey={`${caseId}:${a.id}`}
                                 annotations={annotations.filter(an => an.attachmentId === a.id)}
                                 onCreateAnnotation={p => createAnnotation(a.id, p)}
                                 onDeleteAnnotation={deleteAnnotation}
-                                onLoad={() => track('scan_view', { caseId, ext: a.name.split('.').pop()?.toLowerCase(), size: a.size })}
+                                onLoad={source => track('scan_view', { caseId, ext: a.name.split('.').pop()?.toLowerCase(), size: a.size, source })}
                                 onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: a.name.split('.').pop()?.toLowerCase(), size: a.size })}
                               />
                               <button
@@ -1157,7 +1165,7 @@ export default function CaseThread({
                               data-intent-meta="model"
                               className="mt-1 inline-flex items-center gap-1 text-xs text-slate-500 hover:text-primary"
                             >
-                              {a.name} <span className="text-slate-400">({formatSize(a.size)})</span>
+                              {displayName(a.name)} <span className="text-slate-400">({formatSize(a.size)})</span>
                             </a>
                           </div>
                         ) : isHtmlViewer(a.name) ? (
@@ -1188,7 +1196,7 @@ export default function CaseThread({
                               data-intent-meta="html"
                               className="mt-1 inline-flex items-center gap-1 text-xs text-slate-500 hover:text-primary"
                             >
-                              {a.name} <span className="text-slate-400">({formatSize(a.size)}) · treatment-plan viewer</span>
+                              {displayName(a.name)} <span className="text-slate-400">({formatSize(a.size)}) · treatment-plan viewer</span>
                             </a>
                           </div>
                         ) : (
@@ -1201,7 +1209,7 @@ export default function CaseThread({
                             className="text-sm text-primary hover:bg-slate-50 flex items-center gap-2 border border-slate-200 rounded-lg px-3 py-2 transition-colors"
                           >
                             <svg className="w-4 h-4 text-slate-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M13 7l-5.5 5.5a2 2 0 0 0 2.8 2.8L16 9a3.5 3.5 0 0 0-5-5l-6 6a5 5 0 0 0 7 7l5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                            {a.name} <span className="text-slate-400">({formatSize(a.size)})</span>
+                            {displayName(a.name)} <span className="text-slate-400">({formatSize(a.size)})</span>
                           </a>
                         )
                       ))}
@@ -1333,10 +1341,11 @@ export default function CaseThread({
                 <ScanViewer
                   url={maximized.dataUrl}
                   className="h-full w-full"
+                  viewKey={`${caseId}:${maximized.id}`}
                   annotations={annotations.filter(an => an.attachmentId === maximized.id)}
                   onCreateAnnotation={p => createAnnotation(maximized.id, p)}
                   onDeleteAnnotation={deleteAnnotation}
-                  onLoad={() => track('scan_view', { caseId, ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true })}
+                  onLoad={source => track('scan_view', { caseId, ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true, source })}
                   onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true })}
                 />
               ) : (
