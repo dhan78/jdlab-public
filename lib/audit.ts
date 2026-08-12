@@ -23,6 +23,9 @@ export type AuditAction =
   | 'password.reset_request'
   | 'password.reset_complete'
   | 'demo.toggle'
+  | 'case.ingest'
+  | 'practice_map.set'
+  | 'practice_map.delete'
 
 function toIntOrNull(v: string | number | null | undefined): number | null {
   if (v === null || v === undefined) return null

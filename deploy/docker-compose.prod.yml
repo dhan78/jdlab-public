@@ -1,7 +1,7 @@
 # JD Dental Lab — production stack (EC2 + Docker/Podman Compose)
 #
 # Secrets come from AWS SSM Parameter Store, resolved on the HOST by
-# jdlab-env.sh into /run/jdlab/*.env (tmpfs, 0600, root-only) and injected via
+# jdlab-env.sh into /home/ec2-user/temp/*.env (on disk, 0600) and injected via
 # `env_file`. Images stay lean (no AWS CLI baked in), no `eval`, no ~/.aws mounts.
 #
 # Box prerequisites:
@@ -22,7 +22,7 @@ services:
     image: ghcr.io/dhan78/jdlab-public:latest
     container_name: jdlab-nextjs
     restart: unless-stopped
-    env_file: [/run/jdlab/nextjs.env]      # SSM /jdlab/  (DATABASE_URL, PORTAL_JWT_SECRET, S3_*, AZURE_*)
+    env_file: [/home/ec2-user/temp/nextjs.env]      # SSM /jdlab/  (DATABASE_URL, PORTAL_JWT_SECRET, S3_*, AZURE_*)
     environment:
       - AWS_REGION=us-east-1
     expose: ["3000"]
@@ -44,7 +44,7 @@ services:
     image: postgres:18.3
     container_name: postgres-prostore
     restart: always
-    env_file: [/run/jdlab/db.env]          # SSM /jdlab/db/  (POSTGRES_USER/PASSWORD/DB, JDLAB_DB_PASSWORD, OUTLINE_DB_PASSWORD, S3_BUCKET_URL)
+    env_file: [/home/ec2-user/temp/db.env]          # SSM /jdlab/db/  (POSTGRES_USER/PASSWORD/DB, JDLAB_DB_PASSWORD, OUTLINE_DB_PASSWORD, S3_BUCKET_URL)
     volumes:
       - postgres_data:/var/lib/postgresql/data:z     # PGDATA subdir (not the parent)
       - ./initdb:/docker-entrypoint-initdb.d:ro,z    # first-boot: create jdlab + outline roles/DBs
@@ -59,7 +59,7 @@ services:
     image: ghcr.io/dhan78/prostore:latest
     container_name: prostore-app
     restart: unless-stopped
-    env_file: [/run/jdlab/prostore.env]    # SSM /jdlab/prostore/
+    env_file: [/home/ec2-user/temp/prostore.env]    # SSM /jdlab/prostore/
     environment:
       - AWS_REGION=us-east-1
       - AUTH_TRUST_HOST=true
@@ -72,7 +72,7 @@ services:
     image: outlinewiki/outline:latest
     container_name: outline
     restart: unless-stopped
-    env_file: [/run/jdlab/outline.env]     # SSM /jdlab/outline/  (SECRET_KEY, UTILS_SECRET, DATABASE_URL, URL, ...)
+    env_file: [/home/ec2-user/temp/outline.env]     # SSM /jdlab/outline/  (SECRET_KEY, UTILS_SECRET, DATABASE_URL, URL, ...)
     environment:
       - REDIS_URL=redis://outline-redis:6379
     expose: ["3000"]
@@ -109,6 +109,25 @@ services:
       - app
       - outline
 
+  # --- Scan ingestion worker (Python; see ../ingestion) ---
+  # Polls a source (local folder / S3 dropbox) for new scans and creates cases
+  # via the token-guarded /api/ingest/cases endpoint, which hands off to the
+  # S3 -> GLB conversion Lambda. Idempotent end-to-end.
+  ingestion:
+    build: ../ingestion
+    container_name: jdlab-ingestion
+    restart: unless-stopped
+    env_file: [/home/ec2-user/temp/ingestion.env]   # SSM /jdlab/ingestion/ (INGEST_API_TOKEN + INGEST_* config)
+    environment:
+      - PORTAL_BASE_URL=http://nextjs:3000
+      - AWS_REGION=us-east-1
+    volumes:
+      - ingestion_data:/var/lib/jdlab-ingest         # dedupe ledger (survives restarts)
+      - ./ingest-inbox:/inbox:z                      # local-source drop folder (ignored when INGEST_SOURCE=s3)
+    depends_on:
+      db: { condition: service_healthy }
+      nextjs: { condition: service_started }
+
 # Postgres backups run on the HOST via cron, not a container — see
 # ./jdlab-backup.sh (docker exec pg_dumpall -> gzip -> S3). Keeps the micro
 # instance lean (no extra always-on container) and the dump client version
@@ -120,3 +139,4 @@ volumes:
   postgres_data:
   caddy_data:
   caddy_config:
+  ingestion_data:

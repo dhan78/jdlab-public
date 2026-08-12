@@ -42,7 +42,7 @@ const MAX_BYTES = 256 * 1024 // skip files larger than this
 // Default roots walked when nothing is passed on the CLI.
 const DEFAULT_TARGETS = [
   'app', 'components', 'lib', 'drizzle', 'scripts', 'tests', 'specs',
-  'deploy', 'test-fixtures', 'lambda',
+  'deploy', 'test-fixtures', 'lambda', 'ingestion',
   'middleware.ts', 'next.config.ts', 'tailwind.config.ts', 'postcss.config.js',
   'drizzle.config.ts', 'tsconfig.json', 'package.json', 'eslint.config.mjs',
   'docker-compose.yml', 'Dockerfile', 'Caddyfile', 'README.md', 'HANDOFF.md',
@@ -50,14 +50,14 @@ const DEFAULT_TARGETS = [
 
 const IGNORE_DIRS = new Set([
   'node_modules', '.git', '.next', 'dist', 'build', 'out', 'coverage',
-  '.turbo', '.vercel', 'public', '.agents',
+  '.turbo', '.vercel', 'public', '.agents', '__pycache__', '.venv', 'inbox',
 ])
 const IGNORE_FILES = new Set([
   'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'next-env.d.ts',
 ])
 const IGNORE_EXT = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.woff', '.woff2',
-  '.ttf', '.otf', '.pdf', '.zip', '.gz', '.mp4', '.mov', '.lock',
+  '.ttf', '.otf', '.pdf', '.zip', '.gz', '.mp4', '.mov', '.lock', '.pyc',
 ])
 
 // Never leak secrets.
@@ -68,6 +68,7 @@ function isSecret(rel: string): boolean {
 
 const LANG: Record<string, string> = {
   '.ts': 'ts', '.tsx': 'tsx', '.js': 'js', '.jsx': 'jsx', '.mjs': 'js',
+  '.py': 'python',
   '.json': 'json', '.css': 'css', '.scss': 'scss', '.html': 'html',
   '.sql': 'sql', '.yml': 'yaml', '.yaml': 'yaml', '.sh': 'bash', '.toml': 'toml',
   '.svg': 'xml',

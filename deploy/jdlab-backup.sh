@@ -18,18 +18,18 @@
 #   /opt/jdlab/jdlab-backup.sh
 #
 # Env (overridable; sensible defaults):
-#   BACKUP_DIR      local dump dir           (default: /opt/jdlab/backups)
+#   BACKUP_DIR      local dump dir           (default: /home/ec2-user/backups)
 #   RETENTION_DAYS  prune local dumps > N     (default: 7)
 #   DB_CONTAINER    postgres container name   (default: postgres-prostore)
-#   S3_BUCKET_URL   s3://bucket/prefix        (from /run/jdlab/db.env; skip if unset)
+#   S3_BUCKET_URL   s3://bucket/prefix        (from /home/ec2-user/temp/db.env; skip if unset)
 set -eo pipefail
 
-BACKUP_DIR="${BACKUP_DIR:-/opt/jdlab/backups}"
+BACKUP_DIR="${BACKUP_DIR:-/home/ec2-user/backups}"
 RETENTION_DAYS="${RETENTION_DAYS:-7}"
 DB_CONTAINER="${DB_CONTAINER:-postgres-prostore}"
 
-# S3_BUCKET_URL is written by jdlab-env.sh into the tmpfs env file.
-[ -f /run/jdlab/db.env ] && . /run/jdlab/db.env
+# S3_BUCKET_URL is written by jdlab-env.sh into the env file.
+[ -f /home/ec2-user/temp/db.env ] && . /home/ec2-user/temp/db.env
 
 mkdir -p "$BACKUP_DIR"
 DATE=$(date +%Y-%m-%d_%H-%M-%S)

@@ -1,0 +1,102 @@
+# .bashrc
+
+# Source global definitions
+if [ -f /etc/bashrc ]; then
+	. /etc/bashrc
+fi
+
+# User specific environment
+if ! [[ "$PATH" =~ "$HOME/.local/bin:$HOME/bin:" ]]
+then
+    PATH="$HOME/.local/bin:$HOME/bin:$PATH"
+fi
+export PATH
+
+# Uncomment the following line if you don't like systemctl's auto-paging feature:
+# export SYSTEMD_PAGER=
+
+# User specific aliases and functions
+if [ -d ~/.bashrc.d ]; then
+	for rc in ~/.bashrc.d/*; do
+		if [ -f "$rc" ]; then
+			. "$rc"
+		fi
+	done
+fi
+
+unset rc
+set -o vi
+ssm_secrets_list() {
+  local search_pattern="${1:-/}"
+  local region="${2:-us-east-1}"
+  local profile="$3"
+  local max_val="${SSM_MAX_VALUE_LEN:-60}"   # elide decrypted values longer than this
+
+  if ! command -v aws >/dev/null 2>&1; then
+    echo "❌ Error: AWS CLI is not installed."
+    return 1
+  fi
+
+  # Convert loose wildcards (*) to regex wildcards (.*)
+  local regex_pattern
+  regex_pattern=$(echo "$search_pattern" | sed 's/\*/.*/g')
+
+  # Determine which paths to scan based on your active IAM resource policy
+  local scan_paths=()
+  if [[ "$search_pattern" =~ ^/github ]]; then
+    scan_paths=("/github/")
+  elif [[ "$search_pattern" =~ ^/jdlab ]]; then
+    scan_paths=("/jdlab/")
+  else
+    scan_paths=("/github/" "/jdlab/")
+  fi
+
+  # Gather the data from the permitted paths into a temp variable
+  local raw_output=""
+  for path in "${scan_paths[@]}"; do
+    local cmd=(aws ssm get-parameters-by-path --path "$path" --recursive --with-decryption --region "$region" --query "Parameters[*].[Name,Type,Value,LastModifiedDate]" --output text)
+    if [ -n "$profile" ]; then
+      cmd+=(--profile "$profile")
+    fi
+    local res
+    res=$("${cmd[@]}" 2>/dev/null)
+    if [ -n "$res" ]; then
+      raw_output="${raw_output}${res}"$'\n'
+    fi
+  done
+
+  # Process and display interactive output via less pager
+  if [ -n "$raw_output" ]; then
+    (
+      echo "========================================================================================================================"
+      echo "🔍 MATCHED PATH / PATTERN: '$search_pattern' ($region)"
+      echo "========================================================================================================================"
+      printf "%-40s %-14s %-62s %-20s\n" "PARAMETER NAME" "TYPE" "DECRYPTED VALUE" "LAST MODIFIED"
+      echo "------------------------------------------------------------------------------------------------------------------------"
+
+      echo "$raw_output" | awk -F'\t' -v pat="$regex_pattern" -v maxv="$max_val" '
+        BEGIN { IGNORECASE = 1 }
+        $1 ~ pat {
+          # 1) Elide an over-long decrypted value (field 3) so the table stays tidy.
+          if (length($3) > maxv) { $3 = substr($3, 1, maxv - 1) "…" }
+
+          # 2) TREE-ORDER key: mark each path segment leaf(0)/folder(1) so that at
+          #    EVERY level the leaves sort before the sub-folders. e.g. all
+          #    /jdlab/<key> come before /jdlab/db/..., /jdlab/outline/..., etc.
+          #    \001 separator keeps segments comparing cleanly.
+          m = split($1, seg, "/")            # seg[1]="" (leading /); real segs 2..m
+          key = ""
+          for (i = 2; i <= m; i++) {
+            key = key "\001" (i == m ? "0" : "1") seg[i]
+          }
+          print key "\t" $1 "\t" $2 "\t" $3 "\t" $4
+        }
+      ' \
+        | sort -f -t $'\t' -k1,1 -u \
+        | cut -f2- \
+        | column -t -s $'\t'
+    ) | less -S
+  else
+    echo "❌ No matching parameters found, or Access Denied."
+  fi
+}

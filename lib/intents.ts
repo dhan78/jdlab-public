@@ -83,6 +83,7 @@ export const INTENTS = {
   measure_cancel: 'Cancel the pending measurement',
   measure_open: 'Open a saved measurement note',
   measure_delete: 'Delete a saved measurement',
+  view_reset: 'Reset the 3D camera to the default framing',
 
   // --- Admin: doctors ---
   admin_doctor_create: 'Create a doctor account',
@@ -97,6 +98,10 @@ export const INTENTS = {
   // --- Admin: public demo case ---
   demo_case_save: 'Save the public demo case id',
   demo_toggle: 'Turn the public demo on/off',
+
+  // --- Admin: scan-ingestion practice routing ---
+  practice_map_save: 'Add/update a practice -> doctor mapping',
+  practice_map_delete: 'Remove a practice -> doctor mapping',
 
   // --- Admin: telemetry viewer ---
   telemetry_session_open: 'Open a telemetry session timeline',

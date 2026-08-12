@@ -179,6 +179,19 @@ export async function listCasesForDoctor(doctorId: string): Promise<Case[]> {
   return rows.map(r => mapCase(r.c, r.doctorName))
 }
 
+// Look up a case by its external/source id (stored in scan_case_id). Used by the
+// automated ingestion pipeline to stay idempotent — never create the same
+// source case twice. Returns the public (encoded) case id if it exists.
+export async function findCaseIdByExternalId(externalId: string): Promise<string | undefined> {
+  if (!externalId) return undefined
+  const [row] = await db
+    .select({ id: cases.id })
+    .from(cases)
+    .where(eq(cases.scanCaseId, externalId))
+    .limit(1)
+  return row ? encodeCaseId(row.id) : undefined
+}
+
 export async function updateCaseStatus(
   id: string,
   status: CaseStatus,
