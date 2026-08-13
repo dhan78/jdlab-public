@@ -26,6 +26,8 @@ export type AuditAction =
   | 'case.ingest'
   | 'practice_map.set'
   | 'practice_map.delete'
+  | 'marketing_image.upload'
+  | 'marketing_image.delete'
 
 function toIntOrNull(v: string | number | null | undefined): number | null {
   if (v === null || v === undefined) return null

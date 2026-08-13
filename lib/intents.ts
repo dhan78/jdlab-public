@@ -103,6 +103,15 @@ export const INTENTS = {
   practice_map_save: 'Add/update a practice -> doctor mapping',
   practice_map_delete: 'Remove a practice -> doctor mapping',
 
+  // --- Admin: marketing images ---
+  marketing_image_drop: 'Drop/choose marketing images to optimize + save',
+  marketing_image_collection: 'Pick the collection for uploaded images',
+  marketing_image_copy_path: 'Copy a marketing image path',
+  marketing_image_delete: 'Remove a marketing image',
+
+  // --- Admin: dashboard nav ---
+  admin_nav: 'Switch admin dashboard section',
+
   // --- Admin: telemetry viewer ---
   telemetry_session_open: 'Open a telemetry session timeline',
   telemetry_copy_steps: 'Copy the session steps',

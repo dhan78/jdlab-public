@@ -46,7 +46,7 @@ export default function PortalHeader({ name, email, role }: PortalHeaderProps) {
               <Link
                 href="/portal/admin"
                 data-intent="nav_admin"
-                className="hidden rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-primary sm:inline-flex"
+                className="inline-flex rounded-lg px-2.5 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-primary sm:px-3"
                 aria-label="Admin dashboard"
               >
                 Admin

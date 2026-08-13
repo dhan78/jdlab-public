@@ -1153,7 +1153,7 @@ export default function CaseThread({
                                 onClick={() => setMaximized(a)}
                                 title="Expand to full window"
                                 aria-label="Expand to full window"
-                                className="absolute right-2 top-2 rounded-lg bg-black/40 p-1.5 text-white/90 opacity-0 backdrop-blur-sm transition hover:bg-black/60 focus:opacity-100 group-hover:opacity-100"
+                                className="absolute right-2 top-2 rounded-lg bg-black/40 p-1.5 text-white/90 opacity-80 backdrop-blur-sm transition hover:bg-black/60 hover:opacity-100"
                               >
                                 <IconMaximize />
                               </button>
@@ -1184,7 +1184,7 @@ export default function CaseThread({
                                 onClick={() => setMaximized(a)}
                                 title="Expand to full window"
                                 aria-label="Expand to full window"
-                                className="absolute right-2 top-2 rounded-lg bg-slate-900/50 p-1.5 text-white opacity-0 backdrop-blur-sm transition hover:bg-slate-900/70 focus:opacity-100 group-hover:opacity-100"
+                                className="absolute right-2 top-2 rounded-lg bg-slate-900/50 p-1.5 text-white opacity-80 backdrop-blur-sm transition hover:bg-slate-900/70 hover:opacity-100"
                               >
                                 <IconMaximize />
                               </button>
