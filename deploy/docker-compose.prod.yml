@@ -114,16 +114,18 @@ services:
   # via the token-guarded /api/ingest/cases endpoint, which hands off to the
   # S3 -> GLB conversion Lambda. Idempotent end-to-end.
   ingestion:
-    build: ../ingestion
+    image: ghcr.io/dhan78/jdlab-public-ingestion:latest
     container_name: jdlab-ingestion
     restart: unless-stopped
     env_file: [/home/ec2-user/temp/ingestion.env]   # SSM /jdlab/ingestion/ (INGEST_API_TOKEN + INGEST_* config)
     environment:
       - PORTAL_BASE_URL=http://nextjs:3000
       - AWS_REGION=us-east-1
-    volumes:
-      - ingestion_data:/var/lib/jdlab-ingest         # dedupe ledger (survives restarts)
-      - ./ingest-inbox:/inbox:z                      # local-source drop folder (ignored when INGEST_SOURCE=s3)
+      # Ephemeral ledger (no volume): the portal DB is the real dedupe
+      # (findCaseIdByExternalId), so a reset ledger never creates duplicates.
+      - INGEST_LEDGER_PATH=/tmp/jdlab-ingest/seen.json
+    # No volumes: S3-source only. For INGEST_SOURCE=local, add a drop folder:
+    #   volumes: [ ./ingest-inbox:/inbox:z ]
     depends_on:
       db: { condition: service_healthy }
       nextjs: { condition: service_started }
@@ -139,4 +141,3 @@ volumes:
   postgres_data:
   caddy_data:
   caddy_config:
-  ingestion_data:

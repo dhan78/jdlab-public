@@ -12,6 +12,7 @@ import {
   GetObjectCommand,
   DeleteObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
@@ -115,5 +116,58 @@ export async function headAttachment(key: string): Promise<{ size: number } | nu
     return { size: r.ContentLength ?? 0 }
   } catch {
     return null
+  }
+}
+
+// --- Optimized scan previews (GLB) --------------------------------------------
+// The S3 conversion Lambda writes decimated GLBs under SCAN_GLB_PREFIX in
+// SCAN_BUCKET (a zip fans out to one GLB per mesh; an STL/PLY yields one). We
+// resolve them at VIEW time from a case's source scan key — no callback, no
+// stored case↔glb link — so previews appear whenever conversion has finished.
+// Off (returns []) unless SCAN_BUCKET is configured, so dev degrades cleanly.
+
+const SCAN_BUCKET = process.env.SCAN_BUCKET
+const SCAN_RAW_PREFIX = (process.env.SCAN_RAW_PREFIX ?? 'scans/raw/').replace(/^\/+/, '')
+const SCAN_GLB_PREFIX = (process.env.SCAN_GLB_PREFIX ?? 'scans/glb/').replace(/^\/+/, '')
+
+export interface GlbPreview {
+  name: string
+  url: string
+  size: number
+}
+
+// The S3 ingestion source sets externalId = "s3:<key>:<etag>"; recover <key>.
+function scanRawKeyFromExternalId(externalId?: string | null): string | null {
+  if (!externalId || !externalId.startsWith('s3:')) return null
+  const rest = externalId.slice(3)
+  const at = rest.lastIndexOf(':')
+  const key = at > 0 ? rest.slice(0, at) : rest
+  return key.startsWith(SCAN_RAW_PREFIX) ? key : null
+}
+
+// List + presign the GLB(s) produced for a case's source scan. A prefix match on
+// "<glb-prefix><stem>" covers both a zip's per-mesh folder and a single-file GLB.
+export async function resolveGlbPreviews(externalId?: string | null): Promise<GlbPreview[]> {
+  if (!SCAN_BUCKET) return []
+  const rawKey = scanRawKeyFromExternalId(externalId)
+  if (!rawKey) return []
+  const stem = rawKey.slice(SCAN_RAW_PREFIX.length).replace(/\.[^./]+$/, '')
+  try {
+    const res = await client().send(
+      new ListObjectsV2Command({ Bucket: SCAN_BUCKET, Prefix: `${SCAN_GLB_PREFIX}${stem}` })
+    )
+    const objs = (res.Contents ?? []).filter(o => o.Key?.toLowerCase().endsWith('.glb'))
+    objs.sort((a, b) => (a.Key ?? '').localeCompare(b.Key ?? ''))
+    return Promise.all(
+      objs.map(async o => ({
+        name: o.Key!.split('/').pop()!,
+        size: o.Size ?? 0,
+        url: await getSignedUrl(client(), new GetObjectCommand({ Bucket: SCAN_BUCKET, Key: o.Key! }), {
+          expiresIn: PRESIGN_TTL_SECONDS,
+        }),
+      }))
+    )
+  } catch {
+    return []
   }
 }

@@ -50,6 +50,8 @@ export const INTENTS = {
   design_approve: 'Approve the design',
   case_pin_toggle: 'Pin/unpin the case',
   case_read_toggle: 'Mark the case read/unread',
+  case_details_open: 'Open the case-details editor',
+  case_details_save: 'Save edited case details',
   scans_received_mark: 'Mark scans as received (starts the SLA clock)',
   status_change: 'Change the case status',
   call_start: 'Start a live video call (placeholder)',

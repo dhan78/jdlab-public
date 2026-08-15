@@ -8,6 +8,7 @@ import {
   STAGES_BY_TYPE,
   CASE_TYPE_LABELS,
   formatDoctorName,
+  caseNeedsDetails,
   type CaseStatus,
   type CaseType,
 } from '@/lib/case-meta'
@@ -17,6 +18,7 @@ import { track } from '@/lib/telemetry'
 import dynamic from 'next/dynamic'
 import HtmlViewer from './HtmlViewer'
 import SleepyPuppy from './SleepyPuppy'
+import CaseDetailsEditor from './CaseDetailsEditor'
 
 // The 3D scan viewer is heavy + WebGL-only, so load it lazily and client-side
 // only, and render it just for attachments that are actually models (.stl/.ply).
@@ -419,6 +421,8 @@ export default function CaseThread({
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
   const [statusSaving, setStatusSaving] = useState(false)
+  const [editingDetails, setEditingDetails] = useState(false)
+  const [glbPreviews, setGlbPreviews] = useState<{ name: string; url: string; size: number }[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [dragActive, setDragActive] = useState(false)
   const [lightbox, setLightbox] = useState<{ items: Attachment[]; index: number } | null>(null)
@@ -551,6 +555,7 @@ export default function CaseThread({
       setMessages(data.messages ?? [])
       setSlaConfig(data.slaConfig ?? {})
       setUnreadCount(data.unreadCount ?? 0)
+      setGlbPreviews(data.glbPreviews ?? [])
       // This GET recorded a case.view (audit); nudge the recently-viewed rail +
       // list to refresh so the just-opened case surfaces at the top. (Opening no
       // longer marks the case read, so this refresh had to be decoupled from it.)
@@ -580,6 +585,7 @@ export default function CaseThread({
       setMessages(data.messages ?? [])
       setSlaConfig(data.slaConfig ?? {})
       setUnreadCount(data.unreadCount ?? 0)
+      setGlbPreviews(data.glbPreviews ?? [])
     } catch {
       /* transient; the stream will prompt again on the next update */
     }
@@ -939,6 +945,24 @@ export default function CaseThread({
 
   return (
     <div className="max-w-3xl">
+        {editingDetails && caseDetail && (
+          <CaseDetailsEditor
+            caseToken={caseDetail.id}
+            initial={{
+              title: caseDetail.title,
+              caseType: caseDetail.caseType,
+              patientName: caseDetail.patientName,
+              surgeryDate: caseDetail.surgeryDate,
+              toothRef: caseDetail.toothRef,
+              material: caseDetail.material,
+              scannerBrand: caseDetail.scannerBrand,
+              isRush: !!caseDetail.isRush,
+              specialInstructions: caseDetail.specialInstructions,
+            }}
+            onClose={() => setEditingDetails(false)}
+            onSaved={refreshCase}
+          />
+        )}
         <Link href="/portal" className="lg:hidden inline-flex items-center gap-1.5 text-slate-500 text-sm hover:text-primary transition-colors">
           <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M12 5l-5 5 5 5" strokeLinecap="round" strokeLinejoin="round" /></svg>
           Back to cases
@@ -946,6 +970,15 @@ export default function CaseThread({
 
         {/* Case header */}
         <div className="mt-4 mb-6 bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+          {caseNeedsDetails(caseDetail) && (
+            <div className="mb-4 flex items-center justify-between gap-3 rounded-lg bg-amber-50 ring-1 ring-inset ring-amber-200 px-3 py-2">
+              <span className="inline-flex items-center gap-2 text-sm text-amber-900">
+                <svg className="w-4 h-4 flex-shrink-0 text-amber-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M10 3 2.5 16h15L10 3z" strokeLinejoin="round" /><path d="M10 8v3.5M10 13.7v.3" strokeLinecap="round" /></svg>
+                New case from an incoming scan — add the patient &amp; tooth details.
+              </span>
+              <button type="button" onClick={() => setEditingDetails(true)} data-intent="case_details_open" className="shrink-0 text-xs font-semibold text-amber-800 bg-white ring-1 ring-amber-300 rounded-md px-2.5 py-1 hover:bg-amber-100">Add details</button>
+            </div>
+          )}
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0">
               <div className="flex items-center gap-3 flex-wrap">
@@ -1004,6 +1037,17 @@ export default function CaseThread({
               )}
             </div>
             <div className="flex items-center gap-2 sm:gap-3">
+              <button
+                type="button"
+                data-intent="case_details_open"
+                onClick={() => setEditingDetails(true)}
+                title="Edit case details"
+                aria-label="Edit case details"
+                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M4 13.5V16h2.5l7-7-2.5-2.5-7 7z" strokeLinejoin="round" /><path d="M11.5 6 14 8.5" strokeLinecap="round" /></svg>
+                <span className="hidden sm:inline">Edit</span>
+              </button>
               <button
                 type="button"
                 data-intent="case_pin_toggle"
@@ -1087,6 +1131,37 @@ export default function CaseThread({
             </div>
           </div>
         </div>
+
+        {/* Auto-generated 3D previews (optimized GLBs from the incoming scan) */}
+        {glbPreviews.length > 0 && (
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-2">
+              <svg className="w-4 h-4 text-primary" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M10 2.5 3 6v8l7 3.5 7-3.5V6l-7-3.5z" strokeLinejoin="round" /><path d="M3 6l7 3.5L17 6M10 9.5v8" strokeLinejoin="round" /></svg>
+              <h2 className="text-sm font-semibold text-slate-700">3D preview{glbPreviews.length > 1 ? `s (${glbPreviews.length})` : ''}</h2>
+              <span className="text-xs text-slate-400">auto-generated from the incoming scan</span>
+            </div>
+            <div className="grid grid-cols-1 gap-3">
+              {glbPreviews.map(p => (
+                <div key={p.url} className="overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
+                  <div className="relative h-72">
+                    <ScanViewer
+                      url={p.url}
+                      readOnly
+                      className="h-full w-full"
+                      viewKey={`${caseId}:glb:${p.name}`}
+                      onLoad={source => track('scan_view', { caseId, ext: 'glb', size: p.size, source })}
+                      onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: 'glb', size: p.size })}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between bg-slate-800 px-3 py-1.5 text-xs text-slate-300">
+                    <span className="truncate">{displayName(p.name)}</span>
+                    <span className="text-slate-400">{formatSize(p.size)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Thread */}
         <div className="space-y-5 mb-6">

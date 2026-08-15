@@ -150,6 +150,43 @@ export async function addCase(input: {
   return mapCase(row, input.doctorName)
 }
 
+// Fill in / edit the doctor-editable detail fields (used when the doctor
+// completes an auto-ingested case that arrived with only a scan). Only keys
+// present in `fields` are changed; a field set to null clears it. Status and
+// scan-receipt live on their own update paths.
+export async function updateCaseDetails(
+  id: string,
+  fields: {
+    title?: string
+    patientName?: string | null
+    surgeryDate?: string | null
+    toothRef?: string | null
+    material?: string | null
+    scannerBrand?: string | null
+    specialInstructions?: string | null
+    shipToAddress?: string | null
+    caseType?: CaseType
+    isRush?: boolean
+  }
+): Promise<Case | undefined> {
+  const set: Partial<typeof cases.$inferInsert> = { updatedAt: new Date() }
+  if (fields.title !== undefined) set.title = fields.title
+  if (fields.patientName !== undefined) set.patientName = fields.patientName
+  if (fields.surgeryDate !== undefined) set.surgeryDate = fields.surgeryDate
+  if (fields.toothRef !== undefined) set.toothRef = fields.toothRef
+  if (fields.material !== undefined) set.material = fields.material
+  if (fields.scannerBrand !== undefined) set.scannerBrand = fields.scannerBrand
+  if (fields.specialInstructions !== undefined) set.specialInstructions = fields.specialInstructions
+  if (fields.shipToAddress !== undefined) set.shipToAddress = fields.shipToAddress
+  if (fields.caseType !== undefined) set.caseType = fields.caseType
+  if (fields.isRush !== undefined) set.isRush = fields.isRush
+
+  const [row] = await db.update(cases).set(set).where(eq(cases.id, decodeCaseId(id))).returning()
+  if (!row) return undefined
+  const [d] = await db.select({ name: users.name }).from(users).where(eq(users.id, row.doctorId)).limit(1)
+  return mapCase(row, d?.name ?? '')
+}
+
 export async function findCaseById(id: string): Promise<Case | undefined> {
   const [r] = await db
     .select({ c: cases, doctorName: users.name })

@@ -24,6 +24,7 @@ export type AuditAction =
   | 'password.reset_complete'
   | 'demo.toggle'
   | 'case.ingest'
+  | 'case.details_update'
   | 'practice_map.set'
   | 'practice_map.delete'
   | 'marketing_image.upload'

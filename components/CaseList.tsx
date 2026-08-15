@@ -12,6 +12,7 @@ import {
   CASE_TYPE_LABELS,
   CASE_TYPE_GROUPS,
   formatDoctorName,
+  caseNeedsDetails,
   type CaseStatus,
   type CaseType,
 } from '@/lib/case-meta'
@@ -994,6 +995,11 @@ export default function CaseList() {
                               )}
                               {c.material && (
                                 <span className="text-xs text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">{c.material}</span>
+                              )}
+                              {caseNeedsDetails(c) && (
+                                <span className="inline-flex items-center text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 ring-1 ring-inset ring-amber-200" title="Add patient &amp; tooth details">
+                                  Needs details
+                                </span>
                               )}
                             </div>
                             <div className="mt-1.5 flex items-center gap-4 flex-wrap text-sm text-slate-500">
