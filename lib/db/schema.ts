@@ -127,9 +127,12 @@ export const caseAnnotations = pgTable(
     caseId: integer('case_id')
       .notNull()
       .references(() => cases.id, { onDelete: 'cascade' }),
-    attachmentId: integer('attachment_id')
-      .notNull()
-      .references(() => messageAttachments.id, { onDelete: 'cascade' }),
+    // Anchor: either a real model attachment (integer id) OR an auto-generated
+    // GLB preview (its S3 key). Exactly one is set (enforced in app code).
+    attachmentId: integer('attachment_id').references(() => messageAttachments.id, {
+      onDelete: 'cascade',
+    }),
+    previewKey: text('preview_key'),
     x: doublePrecision('x').notNull(),
     y: doublePrecision('y').notNull(),
     z: doublePrecision('z').notNull(),

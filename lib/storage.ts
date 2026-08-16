@@ -154,6 +154,7 @@ const SCAN_RAW_PREFIX = (process.env.SCAN_RAW_PREFIX ?? 'scans/raw/').replace(/^
 const SCAN_GLB_PREFIX = (process.env.SCAN_GLB_PREFIX ?? 'scans/glb/').replace(/^\/+/, '')
 
 export interface GlbPreview {
+  id: string
   name: string
   url: string
   size: number
@@ -183,6 +184,7 @@ export async function resolveGlbPreviews(externalId?: string | null): Promise<Gl
     objs.sort((a, b) => (a.Key ?? '').localeCompare(b.Key ?? ''))
     return Promise.all(
       objs.map(async o => ({
+        id: o.Key!,
         name: o.Key!.split('/').pop()!,
         size: o.Size ?? 0,
         url: await getSignedUrl(client(), new GetObjectCommand({ Bucket: SCAN_BUCKET, Key: o.Key! }), {

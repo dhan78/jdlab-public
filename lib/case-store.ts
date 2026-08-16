@@ -527,7 +527,8 @@ export async function isCasePinned(userId: string, caseId: string): Promise<bool
 
 export interface CaseAnnotation {
   id: string
-  attachmentId: string
+  attachmentId: string | null
+  previewKey: string | null
   kind: string // 'pin' | 'measure'
   x: number
   y: number
@@ -545,7 +546,8 @@ export interface CaseAnnotation {
 function mapAnnotation(r: typeof caseAnnotations.$inferSelect): CaseAnnotation {
   return {
     id: String(r.id),
-    attachmentId: String(r.attachmentId),
+    attachmentId: r.attachmentId != null ? String(r.attachmentId) : null,
+    previewKey: r.previewKey ?? null,
     kind: r.kind,
     x: r.x,
     y: r.y,
@@ -574,13 +576,15 @@ export async function listCaseAnnotations(caseId: string): Promise<CaseAnnotatio
   return rows.map(mapAnnotation)
 }
 
-// Create a pin. Verifies the attachment actually belongs to this case
-// (defense-in-depth: the id is enumerable). Returns null if the attachment
-// isn't part of the case.
+// Create a pin/measurement. It anchors to EITHER a model attachment (verified to
+// belong to this case) OR a GLB preview key (the caller validates it belongs to
+// the case, since previews are resolved from S3, not stored rows). Returns null
+// if an attachment anchor doesn't belong to the case.
 export async function createCaseAnnotation(
   caseId: string,
   input: {
-    attachmentId: string
+    attachmentId?: string
+    previewKey?: string
     kind?: string
     x: number
     y: number
@@ -595,21 +599,29 @@ export async function createCaseAnnotation(
   }
 ): Promise<CaseAnnotation | null> {
   const cid = decodeCaseId(caseId)
-  const aid = toIntId(input.attachmentId)
-  if (cid < 0 || aid < 0) return null
-  const [owner] = await db
-    .select({ id: messageAttachments.id })
-    .from(messageAttachments)
-    .innerJoin(caseMessages, eq(messageAttachments.messageId, caseMessages.id))
-    .where(and(eq(messageAttachments.id, aid), eq(caseMessages.caseId, cid)))
-    .limit(1)
-  if (!owner) return null
+  if (cid < 0) return null
+  let aid: number | null = null
+  let previewKey: string | null = null
+  if (input.previewKey) {
+    previewKey = input.previewKey.slice(0, 512)
+  } else {
+    aid = toIntId(input.attachmentId ?? '')
+    if (aid < 0) return null
+    const [owner] = await db
+      .select({ id: messageAttachments.id })
+      .from(messageAttachments)
+      .innerJoin(caseMessages, eq(messageAttachments.messageId, caseMessages.id))
+      .where(and(eq(messageAttachments.id, aid), eq(caseMessages.caseId, cid)))
+      .limit(1)
+    if (!owner) return null
+  }
   const uid = input.authorId != null ? toIntId(input.authorId) : -1
   const [row] = await db
     .insert(caseAnnotations)
     .values({
       caseId: cid,
       attachmentId: aid,
+      previewKey,
       kind: input.kind === 'measure' ? 'measure' : 'pin',
       x: input.x,
       y: input.y,

@@ -6,6 +6,7 @@ import {
   listCaseAnnotations,
   createCaseAnnotation,
 } from '@/lib/case-store'
+import { resolveGlbPreviews } from '@/lib/storage'
 import { rateLimit } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
@@ -25,7 +26,7 @@ function canAccess(session: SessionPayload, caseDoctorId: string): boolean {
 async function resolve(
   request: NextRequest,
   params: Promise<{ id: string }>
-): Promise<{ session: SessionPayload; id: string; doctorId: string } | NextResponse> {
+): Promise<{ session: SessionPayload; id: string; doctorId: string; scanCaseId: string | null } | NextResponse> {
   const { id } = await params
   const session = await getSession(request)
   if (!session) {
@@ -38,7 +39,7 @@ async function resolve(
   if (!canAccess(session, caseRow.doctorId)) {
     return NextResponse.json({ error: 'You do not have access to this case' }, { status: 403 })
   }
-  return { session, id, doctorId: caseRow.doctorId }
+  return { session, id, doctorId: caseRow.doctorId, scanCaseId: caseRow.scanCaseId ?? null }
 }
 
 // A pin is deletable by its author, or by any admin.
@@ -69,7 +70,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     )
   }
 
-  let body: { attachmentId?: unknown; kind?: unknown; x?: unknown; y?: unknown; z?: unknown; bx?: unknown; by?: unknown; bz?: unknown; body?: unknown }
+  let body: { attachmentId?: unknown; previewKey?: unknown; kind?: unknown; x?: unknown; y?: unknown; z?: unknown; bx?: unknown; by?: unknown; bz?: unknown; body?: unknown }
   try {
     body = await request.json()
   } catch {
@@ -77,6 +78,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   const attachmentId = typeof body.attachmentId === 'string' ? body.attachmentId : ''
+  const previewKey = typeof body.previewKey === 'string' ? body.previewKey : ''
   const kind = body.kind === 'measure' ? 'measure' : 'pin'
   const x = typeof body.x === 'number' ? body.x : NaN
   const y = typeof body.y === 'number' ? body.y : NaN
@@ -86,7 +88,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const bz = typeof body.bz === 'number' ? body.bz : null
   const note = typeof body.body === 'string' ? body.body.trim() : ''
 
-  if (!attachmentId || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+  if ((!attachmentId && !previewKey) || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
     return NextResponse.json({ error: 'A point on the model is required' }, { status: 400 })
   }
   // A measurement needs its second point; the note is optional for it.
@@ -98,8 +100,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: 'A note is required' }, { status: 400 })
   }
 
+  // A GLB preview anchor must belong to this case (previews are resolved from
+  // S3, not stored rows, so validate against the live set).
+  if (previewKey) {
+    const previews = await resolveGlbPreviews(r.scanCaseId)
+    if (!previews.some(p => p.id === previewKey)) {
+      return NextResponse.json({ error: 'That preview is not part of this case' }, { status: 404 })
+    }
+  }
+
   const created = await createCaseAnnotation(r.id, {
-    attachmentId,
+    attachmentId: attachmentId || undefined,
+    previewKey: previewKey || undefined,
     kind,
     x,
     y,

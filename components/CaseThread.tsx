@@ -43,10 +43,11 @@ interface Attachment {
   dataUrl: string
 }
 
-// A 3D surface pin on a model attachment (visible to both doctor and lab).
+// A 3D surface pin on a model attachment or an auto-generated GLB preview.
 interface Annotation {
   id: string
-  attachmentId: string
+  attachmentId: string | null
+  previewKey?: string | null
   kind?: string // 'pin' | 'measure'
   x: number
   y: number
@@ -422,7 +423,7 @@ export default function CaseThread({
   const [sendError, setSendError] = useState('')
   const [statusSaving, setStatusSaving] = useState(false)
   const [editingDetails, setEditingDetails] = useState(false)
-  const [glbPreviews, setGlbPreviews] = useState<{ name: string; url: string; size: number }[]>([])
+  const [glbPreviews, setGlbPreviews] = useState<{ id: string; name: string; url: string; size: number }[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [dragActive, setDragActive] = useState(false)
   const [lightbox, setLightbox] = useState<{ items: Attachment[]; index: number } | null>(null)
@@ -476,6 +477,35 @@ export default function CaseThread({
           const data = await res.json()
           if (data.annotation) setAnnotations(prev => [...prev, data.annotation])
           // PHI-safe: kind + note LENGTH only, never the note text.
+          track('annotation_add', { caseId, kind: p.kind ?? 'pin', len: p.body.length })
+        } else {
+          reportClientError('annotation_create', caseId, `status ${res.status}`, { status: res.status })
+        }
+      } catch (e) {
+        reportClientError('annotation_create', caseId, e instanceof Error ? e.message : 'create failed')
+      }
+    },
+    [caseId]
+  )
+
+  // Create a pin on a GLB preview (anchored by its S3 key, not an attachment id).
+  const createPreviewAnnotation = useCallback(
+    async (
+      previewKey: string,
+      p: {
+        x: number; y: number; z: number; body: string
+        kind?: string; bx?: number; by?: number; bz?: number
+      }
+    ) => {
+      try {
+        const res = await fetch(`/api/portal/cases/${caseId}/annotations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ previewKey, ...p }),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          if (data.annotation) setAnnotations(prev => [...prev, data.annotation])
           track('annotation_add', { caseId, kind: p.kind ?? 'pin', len: p.body.length })
         } else {
           reportClientError('annotation_create', caseId, `status ${res.status}`, { status: res.status })
@@ -1138,17 +1168,19 @@ export default function CaseThread({
             <div className="flex items-center gap-2 mb-2">
               <svg className="w-4 h-4 text-primary" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M10 2.5 3 6v8l7 3.5 7-3.5V6l-7-3.5z" strokeLinejoin="round" /><path d="M3 6l7 3.5L17 6M10 9.5v8" strokeLinejoin="round" /></svg>
               <h2 className="text-sm font-semibold text-slate-700">3D preview{glbPreviews.length > 1 ? `s (${glbPreviews.length})` : ''}</h2>
-              <span className="text-xs text-slate-400">auto-generated from the incoming scan</span>
+              <span className="text-xs text-slate-400">auto-generated · click the model to drop a pin</span>
             </div>
             <div className="grid grid-cols-1 gap-3">
               {glbPreviews.map(p => (
-                <div key={p.url} className="overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
+                <div key={p.id} className="overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
                   <div className="relative h-72">
                     <ScanViewer
                       url={p.url}
-                      readOnly
                       className="h-full w-full"
-                      viewKey={`${caseId}:glb:${p.name}`}
+                      viewKey={`${caseId}:glb:${p.id}`}
+                      annotations={annotations.filter(an => an.previewKey === p.id)}
+                      onCreateAnnotation={pt => createPreviewAnnotation(p.id, pt)}
+                      onDeleteAnnotation={deleteAnnotation}
                       onLoad={source => track('scan_view', { caseId, ext: 'glb', size: p.size, source })}
                       onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: 'glb', size: p.size })}
                     />
