@@ -523,6 +523,14 @@ export async function isCasePinned(userId: string, caseId: string): Promise<bool
   return !!row?.pinnedAt
 }
 
+// Delete a case and its cascading children. Used to roll back an ingest that
+// created the case but then failed to copy/attach its scan, so a retry stays clean.
+export async function deleteCase(caseId: string): Promise<void> {
+  const cid = decodeCaseId(caseId)
+  if (cid < 0) return
+  await db.delete(cases).where(eq(cases.id, cid))
+}
+
 // --- 3D surface annotations (pins on a specific model attachment) ---
 
 export interface CaseAnnotation {
@@ -701,7 +709,9 @@ export async function addMessage(input: {
         if (isS3Enabled() && a.dataUrl) {
           const parsed = parseDataUrl(a.dataUrl)
           if (parsed) {
-            const key = await putAttachment(parsed.bytes, parsed.mimeType || a.mimeType, a.name)
+            const key = await putAttachment(parsed.bytes, parsed.mimeType || a.mimeType, a.name, {
+              caseId: input.caseId,
+            })
             return { ...base, storageKey: key, dataUrl: null }
           }
         }

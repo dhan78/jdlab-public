@@ -16,6 +16,7 @@ import {
   ListObjectsV2Command,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import { scanRawKeyFromExternalId } from './ingest-source'
 
 const BUCKET = process.env.S3_BUCKET
 const REGION = process.env.AWS_REGION ?? 'us-east-1'
@@ -93,9 +94,10 @@ export async function putAttachment(
 export async function copyIntoAttachments(
   sourceBucket: string,
   sourceKey: string,
-  originalName: string
+  originalName: string,
+  opts?: { caseId?: string | number }
 ): Promise<string> {
-  const key = attachmentKey(originalName)
+  const key = attachmentKey(originalName, opts)
   const encodedSource = `${sourceBucket}/${sourceKey.split('/').map(encodeURIComponent).join('/')}`
   await client().send(
     new CopyObjectCommand({
@@ -160,20 +162,11 @@ export interface GlbPreview {
   size: number
 }
 
-// The S3 ingestion source sets externalId = "s3:<key>:<etag>"; recover <key>.
-function scanRawKeyFromExternalId(externalId?: string | null): string | null {
-  if (!externalId || !externalId.startsWith('s3:')) return null
-  const rest = externalId.slice(3)
-  const at = rest.lastIndexOf(':')
-  const key = at > 0 ? rest.slice(0, at) : rest
-  return key.startsWith(SCAN_RAW_PREFIX) ? key : null
-}
-
-// List + presign the GLB(s) produced for a case's source scan. A prefix match on
-// "<glb-prefix><stem>" covers both a zip's per-mesh folder and a single-file GLB.
+// The S3 ingestion source sets externalId = "s3:<key>:<etag>"; recover <key>
+// only when it lives under the raw-scan prefix (parsing in ./ingest-source).
 export async function resolveGlbPreviews(externalId?: string | null): Promise<GlbPreview[]> {
   if (!SCAN_BUCKET) return []
-  const rawKey = scanRawKeyFromExternalId(externalId)
+  const rawKey = scanRawKeyFromExternalId(externalId, SCAN_RAW_PREFIX)
   if (!rawKey) return []
   const stem = rawKey.slice(SCAN_RAW_PREFIX.length).replace(/\.[^./]+$/, '')
   try {

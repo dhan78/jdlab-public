@@ -22,7 +22,6 @@ class PortalClient:
     ) -> None:
         self._url = f"{base_url}/api/ingest/cases"
         self._upload_url = f"{base_url}/api/ingest/upload-url"
-        self._copy_url = f"{base_url}/api/ingest/copy-scan"
         self._token = token
         self._inline_max = inline_max_bytes
         self._timeout = timeout
@@ -55,26 +54,9 @@ class PortalClient:
             raise RuntimeError(f"S3 PUT {put.status_code}: {put.text[:200]}")
         return key
 
-    def _copy_from_s3(self, case: ScanCase) -> str:
-        """Large scan already in S3: have the portal copy it server-side into the
-        attachment space — no download + re-upload through the worker."""
-        src_bucket, src_key = case.s3_ref  # type: ignore[misc]
-        resp = requests.post(
-            self._copy_url,
-            json={"sourceBucket": src_bucket, "sourceKey": src_key, "name": case.filename},
-            headers=self._auth(),
-            timeout=self._timeout,
-        )
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"copy-scan API {resp.status_code}: {resp.text[:300]}")
-        key = resp.json().get("key")
-        if not key:
-            raise RuntimeError("copy-scan API returned no key")
-        return key
-
     def _attachment(self, case: ScanCase) -> dict:
         """Route the scan by where it lives / how big it is:
-          - already in S3 (any size) -> server-side copy into the attachment space
+          - already in S3 (any size) -> /cases copies it server-side (copyFrom)
           - local & large            -> presigned direct PUT
           - local & small            -> inline base64
         """
@@ -84,7 +66,8 @@ class PortalClient:
             "size": case.size or len(case.content),
         }
         if case.s3_ref is not None:
-            att["storageKey"] = self._copy_from_s3(case)
+            src_bucket, src_key = case.s3_ref
+            att["copyFrom"] = {"sourceBucket": src_bucket, "sourceKey": src_key}
         elif len(case.content) > self._inline_max:
             att["storageKey"] = self._presign_and_put(case)
         else:

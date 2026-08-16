@@ -3,6 +3,7 @@ import { findDoctorByEmail } from '@/lib/portal-store'
 import {
   addCase,
   addMessage,
+  deleteCase,
   findCaseIdByExternalId,
   CASE_TYPES,
   type CaseType,
@@ -11,6 +12,8 @@ import { recordAudit } from '@/lib/audit'
 import { clientIp } from '@/lib/rate-limit'
 import { resolvePracticeEmail } from '@/lib/practice-map'
 import { ingestAuthFailure } from '@/lib/ingest-auth'
+import { copyIntoAttachments } from '@/lib/storage'
+import { isAllowedCopySource } from '@/lib/ingest-source'
 
 // Automated case intake for the ingestion worker (see /ingestion). This is the
 // ONLY portal write path that isn't a doctor session: it's guarded by a static
@@ -27,6 +30,9 @@ interface Attachment {
   size: number
   dataUrl?: string
   storageKey?: string
+  // An S3 object (validated scans/raw/ source) the portal copies server-side
+  // into the case-scoped attachment folder once the case id exists.
+  copyFrom?: { sourceBucket: string; sourceKey: string }
 }
 
 export async function POST(request: NextRequest) {
@@ -107,25 +113,45 @@ export async function POST(request: NextRequest) {
   })
 
   // Attach the scan as the opening message (authored as the doctor, since the
-  // scan came from their practice).
+  // scan came from their practice). An S3 copyFrom is copied server-side into
+  // the case-scoped folder now that we have the id; roll the case back if the
+  // copy is disallowed or fails, so the worker's retry stays clean.
   const att = body.attachment
-  if (att && typeof att.name === 'string' && (att.dataUrl || att.storageKey)) {
-    await addMessage({
-      caseId: created.id,
-      authorId: doctor.id,
-      authorName: doctor.name,
-      authorRole: 'doctor',
-      body: 'Scan received via automated intake.',
-      attachments: [
-        {
-          name: att.name,
-          mimeType: typeof att.mimeType === 'string' ? att.mimeType : '',
-          size: typeof att.size === 'number' ? att.size : 0,
-          dataUrl: att.dataUrl,
-          storageKey: att.storageKey,
-        },
-      ],
-    })
+  if (att && typeof att.name === 'string') {
+    let storageKey = typeof att.storageKey === 'string' ? att.storageKey : undefined
+    const dataUrl = typeof att.dataUrl === 'string' ? att.dataUrl : undefined
+    if (att.copyFrom && typeof att.copyFrom.sourceBucket === 'string' && typeof att.copyFrom.sourceKey === 'string') {
+      const { sourceBucket, sourceKey } = att.copyFrom
+      const rawPrefix = (process.env.SCAN_RAW_PREFIX ?? 'scans/raw/').replace(/^\/+/, '')
+      if (!isAllowedCopySource(sourceBucket, sourceKey, process.env.SCAN_BUCKET, rawPrefix)) {
+        await deleteCase(created.id)
+        return NextResponse.json({ error: 'scan source not allowed' }, { status: 403 })
+      }
+      try {
+        storageKey = await copyIntoAttachments(sourceBucket, sourceKey, att.name, { caseId: created.id })
+      } catch {
+        await deleteCase(created.id)
+        return NextResponse.json({ error: 'scan copy failed' }, { status: 502 })
+      }
+    }
+    if (storageKey || dataUrl) {
+      await addMessage({
+        caseId: created.id,
+        authorId: doctor.id,
+        authorName: doctor.name,
+        authorRole: 'doctor',
+        body: 'Scan received via automated intake.',
+        attachments: [
+          {
+            name: att.name,
+            mimeType: typeof att.mimeType === 'string' ? att.mimeType : '',
+            size: typeof att.size === 'number' ? att.size : 0,
+            dataUrl,
+            storageKey,
+          },
+        ],
+      })
+    }
   }
 
   await recordAudit({
