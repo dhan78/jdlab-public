@@ -429,16 +429,20 @@ export default function CaseThread({
   const [lightbox, setLightbox] = useState<{ items: Attachment[]; index: number } | null>(null)
   // Attachment currently expanded to a full-window viewer (STL/PLY or HTML).
   const [maximized, setMaximized] = useState<Attachment | null>(null)
+  // A GLB preview expanded to a full-window (annotatable) viewer.
+  const [maximizedPreview, setMaximizedPreview] = useState<{ id: string; name: string; url: string; size: number } | null>(null)
   // 3D surface pins for this case, grouped client-side by attachment id.
   const [annotations, setAnnotations] = useState<Annotation[]>([])
 
   // Close the full-window viewer on Escape.
   useEffect(() => {
-    if (!maximized) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMaximized(null) }
+    if (!maximized && !maximizedPreview) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setMaximized(null); setMaximizedPreview(null) }
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [maximized])
+  }, [maximized, maximizedPreview])
 
   // Load 3D annotations for the case (visible to both doctor and lab). Refetched
   // after each create/delete keeps the numbered badges consistent.
@@ -1184,6 +1188,17 @@ export default function CaseThread({
                       onLoad={source => track('scan_view', { caseId, ext: 'glb', size: p.size, source })}
                       onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: 'glb', size: p.size })}
                     />
+                    <button
+                      type="button"
+                      data-intent="viewer_maximize"
+                      data-intent-meta="glb_preview"
+                      onClick={() => setMaximizedPreview(p)}
+                      title="Expand to full window"
+                      aria-label="Expand to full window"
+                      className="absolute right-2 top-2 rounded-lg bg-black/40 p-1.5 text-white/90 opacity-80 backdrop-blur-sm transition hover:bg-black/60 hover:opacity-100"
+                    >
+                      <IconMaximize />
+                    </button>
                   </div>
                   <div className="flex items-center justify-between bg-slate-800 px-3 py-1.5 text-xs text-slate-300">
                     <span className="truncate">{displayName(p.name)}</span>
@@ -1463,6 +1478,34 @@ export default function CaseThread({
                   onError={detail => reportClientError('html_viewer', caseId, detail, { ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true })}
                 />
               )}
+            </div>
+          </div>
+        )}
+        {maximizedPreview && (
+          <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-sm">
+            <div className="flex items-center justify-between gap-4 px-4 py-3 text-slate-100">
+              <span className="truncate text-sm font-medium">{displayName(maximizedPreview.name)}</span>
+              <button
+                type="button"
+                data-intent="viewer_close"
+                onClick={() => setMaximizedPreview(null)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm text-white transition hover:bg-white/20"
+              >
+                Close
+                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
+              </button>
+            </div>
+            <div className="min-h-0 flex-1">
+              <ScanViewer
+                url={maximizedPreview.url}
+                className="h-full w-full"
+                viewKey={`${caseId}:glb:${maximizedPreview.id}:max`}
+                annotations={annotations.filter(an => an.previewKey === maximizedPreview.id)}
+                onCreateAnnotation={p => createPreviewAnnotation(maximizedPreview.id, p)}
+                onDeleteAnnotation={deleteAnnotation}
+                onLoad={source => track('scan_view', { caseId, ext: 'glb', size: maximizedPreview.size, maximized: true, source })}
+                onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: 'glb', size: maximizedPreview.size, maximized: true })}
+              />
             </div>
           </div>
         )}

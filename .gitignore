@@ -139,3 +139,5 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 lambda.zip
 deploy/jdlab-restore-local.sh
+ingestion/__init__.py
+ingestion/sources/__init__.py
