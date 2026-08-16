@@ -36,7 +36,7 @@ services:
       start_period: 25s
     deploy:
       resources:
-        limits: { memory: 512m }
+        limits: { memory: 768m }
         reservations: { memory: 256m }
 
   # --- Shared Postgres (serves jdlab, prostore, outline — each its OWN database) ---

@@ -64,6 +64,7 @@ class LocalSource(Source):
                     title=str(meta.get("title") or os.path.splitext(name)[0]),
                     filename=name,
                     content=content,
+                    size=len(content),
                     mime_type=guess_mime(name),
                     meta=meta,
                     _ack=(path, meta_path if os.path.exists(meta_path) else None),

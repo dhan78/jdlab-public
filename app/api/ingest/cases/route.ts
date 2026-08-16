@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { timingSafeEqual } from 'node:crypto'
 import { findDoctorByEmail } from '@/lib/portal-store'
 import {
   addCase,
@@ -11,6 +10,7 @@ import {
 import { recordAudit } from '@/lib/audit'
 import { clientIp } from '@/lib/rate-limit'
 import { resolvePracticeEmail } from '@/lib/practice-map'
+import { ingestAuthFailure } from '@/lib/ingest-auth'
 
 // Automated case intake for the ingestion worker (see /ingestion). This is the
 // ONLY portal write path that isn't a doctor session: it's guarded by a static
@@ -21,23 +21,6 @@ import { resolvePracticeEmail } from '@/lib/practice-map'
 // id). If a case already exists with that id we return it (created:false) so a
 // re-delivered scan never double-creates. Choose an ANONYMIZED/non-PHI title.
 
-// Constant-time bearer-token check. Returns 503 if the server has no token
-// configured (feature off), 401 on mismatch, null when authorized.
-function authFailure(request: NextRequest): NextResponse | null {
-  const expected = process.env.INGEST_API_TOKEN
-  if (!expected) {
-    return NextResponse.json({ error: 'Ingestion is not configured' }, { status: 503 })
-  }
-  const header = request.headers.get('authorization') ?? ''
-  const provided = header.startsWith('Bearer ') ? header.slice(7) : ''
-  const a = Buffer.from(provided)
-  const b = Buffer.from(expected)
-  if (a.length !== b.length || !timingSafeEqual(a, b)) {
-    return NextResponse.json({ error: 'Invalid ingestion token' }, { status: 401 })
-  }
-  return null
-}
-
 interface Attachment {
   name: string
   mimeType: string
@@ -47,7 +30,7 @@ interface Attachment {
 }
 
 export async function POST(request: NextRequest) {
-  const denied = authFailure(request)
+  const denied = ingestAuthFailure(request)
   if (denied) return denied
 
   let body: {

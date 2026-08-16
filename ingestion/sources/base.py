@@ -16,6 +16,8 @@ class ScanCase:
     content: bytes            # the raw scan bytes
     mime_type: str = "application/octet-stream"
     practice_key: str = ""    # source practice id -> doctor via the portal practice map
+    size: int = 0             # byte size (from S3 metadata; avoids downloading large files)
+    s3_ref: tuple[str, str] | None = None  # (bucket, key) when the content already lives in S3
     meta: dict = field(default_factory=dict)  # caseType/toothRef/material/scannerBrand/isRush/...
     _ack: object = None       # opaque handle a source uses to finalize (move/delete)
 

@@ -29,6 +29,9 @@ class Config:
     s3_quarantine_prefix: str
     aws_region: str
 
+    # <= this size: inline base64; larger: direct-to-S3 (server-side copy / PUT).
+    inline_max_bytes: int
+
     @staticmethod
     def from_env() -> "Config":
         return Config(
@@ -42,10 +45,14 @@ class Config:
             local_processed_dir=os.environ.get("INGEST_LOCAL_PROCESSED_DIR", "/inbox/processed"),
             local_quarantine_dir=os.environ.get("INGEST_LOCAL_QUARANTINE_DIR", "/inbox/unmapped"),
             s3_bucket=os.environ.get("INGEST_S3_BUCKET", ""),
-            s3_prefix=os.environ.get("INGEST_S3_PREFIX", "intake/"),
+            # Must match the Lambda's RAW_PREFIX and the portal's SCAN_RAW_PREFIX:
+            # one drop under scans/raw/ triggers conversion AND lets the portal
+            # resolve the GLB preview from the case's externalId.
+            s3_prefix=os.environ.get("INGEST_S3_PREFIX", "scans/raw/"),
             s3_processed_prefix=os.environ.get("INGEST_S3_PROCESSED_PREFIX", "processed/"),
             s3_quarantine_prefix=os.environ.get("INGEST_S3_QUARANTINE_PREFIX", "unmapped/"),
             aws_region=os.environ.get("AWS_REGION", "us-east-1"),
+            inline_max_bytes=int(os.environ.get("INGEST_INLINE_MAX_BYTES", str(6 * 1024 * 1024))),
         )
 
     def require(self) -> None:

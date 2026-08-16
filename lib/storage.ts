@@ -10,6 +10,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  CopyObjectCommand,
   DeleteObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
@@ -79,6 +80,28 @@ export async function putAttachment(
       Key: key,
       Body: bytes,
       ContentType: mimeType,
+      ServerSideEncryption: 'AES256',
+    })
+  )
+  return key
+}
+
+/** Server-side copy an existing S3 object (e.g. an already-uploaded scans/raw/
+ *  scan) into the attachment key space, so ingestion never round-trips a large
+ *  file through the worker. Returns the new attachment key. CopySource is
+ *  `<bucket>/<url-encoded-key>` (segments encoded, slashes preserved). */
+export async function copyIntoAttachments(
+  sourceBucket: string,
+  sourceKey: string,
+  originalName: string
+): Promise<string> {
+  const key = attachmentKey(originalName)
+  const encodedSource = `${sourceBucket}/${sourceKey.split('/').map(encodeURIComponent).join('/')}`
+  await client().send(
+    new CopyObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      CopySource: encodedSource,
       ServerSideEncryption: 'AES256',
     })
   )

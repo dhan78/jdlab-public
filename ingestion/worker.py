@@ -29,6 +29,13 @@ log = logging.getLogger("ingest.worker")
 
 _stop = False
 
+# A transient failure (network / portal 5xx) is retried; but an item that keeps
+# failing (e.g. oversized or corrupt) must not loop forever — after this many
+# attempts it's quarantined so it can't starve or crash the portal. In-memory
+# and per-external-id; resets on restart (the ledger/portal stay idempotent).
+MAX_ATTEMPTS = max(1, int(os.environ.get("INGEST_MAX_ATTEMPTS", "3")))
+_fail_counts: dict[str, int] = {}
+
 
 def _handle_signal(signum: int, _frame: types.FrameType | None) -> None:
     global _stop
@@ -74,11 +81,25 @@ def run_once(source: Source, portal: PortalClient, ledger: Ledger) -> int:
             except Exception as qexc:  # noqa: BLE001
                 log.error("quarantine failed for %s: %s", case.external_id, qexc)
             ledger.mark(case.external_id)
+            _fail_counts.pop(case.external_id, None)
             continue
         except Exception as exc:  # noqa: BLE001 — one bad item must not stop the loop
-            log.error("FAILED %s: %s", case.external_id, exc)
+            attempts = _fail_counts.get(case.external_id, 0) + 1
+            _fail_counts[case.external_id] = attempts
+            if attempts >= MAX_ATTEMPTS:
+                # Repeatedly un-postable — quarantine so it can't loop forever.
+                log.error("QUARANTINE %s after %d attempts: %s", case.external_id, attempts, exc)
+                try:
+                    source.quarantine(case)
+                except Exception as qexc:  # noqa: BLE001
+                    log.error("quarantine failed for %s: %s", case.external_id, qexc)
+                ledger.mark(case.external_id)
+                _fail_counts.pop(case.external_id, None)
+            else:
+                log.error("FAILED %s (attempt %d/%d): %s", case.external_id, attempts, MAX_ATTEMPTS, exc)
             continue
         ledger.mark(case.external_id)
+        _fail_counts.pop(case.external_id, None)
         try:
             source.ack(case)
         except Exception as exc:  # noqa: BLE001
@@ -95,7 +116,7 @@ def main() -> int:
     signal.signal(signal.SIGINT, _handle_signal)
 
     source = build_source(cfg)
-    portal = PortalClient(cfg.portal_base_url, cfg.ingest_token)
+    portal = PortalClient(cfg.portal_base_url, cfg.ingest_token, cfg.inline_max_bytes)
     ledger = Ledger(cfg.ledger_path)
 
     log.info(

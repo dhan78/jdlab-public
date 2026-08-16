@@ -56,8 +56,9 @@ class S3Source(Source):
                 if not doctor and not practice_key:
                     log.warning("skip s3://%s/%s: no doctor-email and no practice prefix", self._bucket, key)
                     continue
-                body = self._s3.get_object(Bucket=self._bucket, Key=key)["Body"].read()
                 name = os.path.basename(key)
+                # The scan is already in S3 — never download it. Pass an s3_ref so
+                # the portal copies it server-side into the attachment space.
                 yield ScanCase(
                     # etag makes re-uploads of a changed file a new case.
                     external_id=f"s3:{key}:{obj['ETag'].strip(chr(34))}",
@@ -65,7 +66,9 @@ class S3Source(Source):
                     practice_key=practice_key,
                     title=str(meta.get("title") or os.path.splitext(name)[0]),
                     filename=name,
-                    content=body,
+                    content=b"",
+                    size=int(obj.get("Size", 0)),
+                    s3_ref=(self._bucket, key),
                     mime_type=guess_mime(name),
                     meta={
                         "toothRef": meta.get("tooth-ref"),
