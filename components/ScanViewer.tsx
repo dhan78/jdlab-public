@@ -73,6 +73,10 @@ interface ScanViewerProps {
    *  authoring controls (used by the public /demo surface). Belt-and-suspenders
    *  on top of simply not passing the create/delete callbacks. */
   readOnly?: boolean
+  /** On coarse-pointer (touch) devices, overlay a "tap to interact" scrim so a
+   *  vertical swipe scrolls the PAGE instead of orbiting the model. For inline
+   *  viewers; leave off for the maximized/fullscreen view. */
+  gateTouch?: boolean
   /** Stable per-scan id. When set, the camera pan/zoom/orbit is remembered for
    *  this scan (localStorage) and restored on return — across navigation AND
    *  page reloads — instead of resetting to the framed default. */
@@ -735,6 +739,7 @@ export default function ScanViewer({
   onCreateAnnotation,
   onDeleteAnnotation,
   readOnly = false,
+  gateTouch = false,
   viewKey,
 }: ScanViewerProps) {
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null)
@@ -753,6 +758,19 @@ export default function ScanViewer({
   const [pendingMeasure, setPendingMeasure] = useState<{ a: Vector3; b: Vector3 } | null>(null)
   // Bumped by "Reset view" to force a re-frame (and clear the saved camera).
   const [resetNonce, setResetNonce] = useState(0)
+  // Touch scroll gate: on coarse pointers an inline 3D canvas traps vertical
+  // page scrolling, so overlay a "tap to interact" scrim until the user opts in.
+  const [coarsePointer, setCoarsePointer] = useState(false)
+  const [touchActivated, setTouchActivated] = useState(false)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mq = window.matchMedia('(pointer: coarse)')
+    const update = () => setCoarsePointer(mq.matches)
+    update()
+    mq.addEventListener?.('change', update)
+    return () => mq.removeEventListener?.('change', update)
+  }, [])
+  const touchGateActive = gateTouch && coarsePointer && !touchActivated
   const pins = annotations ?? []
   // Any authoring (pins AND the measure tool, which persists via onCreateAnnotation)
   // requires a create callback and a non-read-only viewer.
@@ -975,8 +993,23 @@ export default function ScanViewer({
         />
       </Canvas>
 
+      {touchGateActive && (
+        <button
+          type="button"
+          data-intent="viewer_touch_activate"
+          onClick={() => setTouchActivated(true)}
+          style={{ touchAction: 'pan-y' }}
+          aria-label="Tap to interact with the 3D model"
+          className="absolute inset-0 flex items-end justify-center pb-3"
+        >
+          <span className="pointer-events-none rounded-full bg-black/55 px-3 py-1 text-xs font-medium text-white/90 backdrop-blur-sm">
+            Tap to interact · swipe to scroll
+          </span>
+        </button>
+      )}
+
       {/* Annotation + measure controls. */}
-      {!error && (geometry || scene) && (
+      {!error && (geometry || scene) && !touchGateActive && (
         <div className="absolute left-2 top-2 flex items-center gap-2">
           {canAnnotate && (
             <button
@@ -1045,7 +1078,7 @@ export default function ScanViewer({
       )}
 
       {/* Reset view — separate corner so it never crowds the pin/measure tools. */}
-      {!error && (geometry || scene) && viewKey && (
+      {!error && (geometry || scene) && viewKey && !touchGateActive && (
         <button
           type="button"
           data-intent="view_reset"

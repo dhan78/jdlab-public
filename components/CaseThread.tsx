@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { StatusIcon } from './StatusIcon'
 import {
@@ -1174,12 +1175,13 @@ export default function CaseThread({
               <h2 className="text-sm font-semibold text-slate-700">3D preview{glbPreviews.length > 1 ? `s (${glbPreviews.length})` : ''}</h2>
               <span className="text-xs text-slate-400">auto-generated · click the model to drop a pin</span>
             </div>
-            <div className="grid grid-cols-1 gap-3">
+            <div className="grid grid-cols-1 gap-5">
               {glbPreviews.map(p => (
                 <div key={p.id} className="overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
-                  <div className="relative h-72">
+                  <div className="relative h-64 sm:h-72">
                     <ScanViewer
                       url={p.url}
+                      gateTouch
                       className="h-full w-full"
                       viewKey={`${caseId}:glb:${p.id}`}
                       annotations={annotations.filter(an => an.previewKey === p.id)}
@@ -1257,9 +1259,10 @@ export default function CaseThread({
                           </button>
                         ) : isModelFile(a.name) ? (
                           <div key={a.id} className="basis-full">
-                            <div className="group relative h-72 w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
+                            <div className="group relative h-64 sm:h-72 w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
                               <ScanViewer
                                 url={a.dataUrl}
+                                gateTouch
                                 className="h-full w-full"
                                 viewKey={`${caseId}:${a.id}`}
                                 annotations={annotations.filter(an => an.attachmentId === a.id)}
@@ -1444,9 +1447,9 @@ export default function CaseThread({
             </button>
           </div>
         </form>
-        {maximized && (
-          <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-sm">
-            <div className="flex items-center justify-between gap-4 px-4 py-3 text-slate-100">
+        {maximized && typeof document !== 'undefined' && createPortal(
+          <div className="fixed inset-0 z-[60] flex flex-col bg-slate-950/95 backdrop-blur-sm">
+            <div className="flex items-center justify-between gap-4 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-slate-100">
               <span className="truncate text-sm font-medium">{maximized.name}</span>
               <button
                 type="button"
@@ -1479,11 +1482,12 @@ export default function CaseThread({
                 />
               )}
             </div>
-          </div>
+          </div>,
+          document.body
         )}
-        {maximizedPreview && (
-          <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-sm">
-            <div className="flex items-center justify-between gap-4 px-4 py-3 text-slate-100">
+        {maximizedPreview && typeof document !== 'undefined' && createPortal(
+          <div className="fixed inset-0 z-[60] flex flex-col bg-slate-950/95 backdrop-blur-sm">
+            <div className="flex items-center justify-between gap-4 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-slate-100">
               <span className="truncate text-sm font-medium">{displayName(maximizedPreview.name)}</span>
               <button
                 type="button"
@@ -1507,7 +1511,8 @@ export default function CaseThread({
                 onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: 'glb', size: maximizedPreview.size, maximized: true })}
               />
             </div>
-          </div>
+          </div>,
+          document.body
         )}
         {lightbox && (
           <Lightbox
