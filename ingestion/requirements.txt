@@ -1,6 +1,0 @@
-# JD Dental Lab — scan ingestion worker (Python)
-#
-# Boto3 for S3 sources + the S3 dropbox; requests for the portal ingest API;
-# paramiko is optional (only if you enable an SFTP source later).
-requests>=2.32
-boto3>=1.34
