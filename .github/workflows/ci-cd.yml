@@ -135,21 +135,6 @@ jobs:
             PORTAL_JWT_SECRET=${{ secrets.PORTAL_JWT_SECRET }}
 
 
-      # The ingestion worker is a SEPARATE image (Python). EC2 has no git checkout,
-      # so it must PULL this image from GHCR rather than `build:` from source.
-      - name: Build and Push Ingestion Worker Image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./ingestion
-          platforms: linux/arm64
-          file: ./ingestion/Dockerfile
-          tags: |
-            ghcr.io/${{ github.repository }}-ingestion:latest
-            ghcr.io/${{ github.repository }}-ingestion:${{ steps.calver.outputs.tag }}
-          cache-from: type=gha,scope=ingestion
-          cache-to: type=gha,mode=max,scope=ingestion
-          outputs: type=image,compression=zstd,push=true
-
 
   # 3. Cleanup Job: Prune older container images to save storage space
   prune-old-images: 
