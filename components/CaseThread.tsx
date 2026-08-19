@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { StatusIcon } from './StatusIcon'
 import {
@@ -408,6 +409,8 @@ export default function CaseThread({
   // A missing/forbidden case (404/403) is a calm, expected state — not an error.
   // Tracked separately so we render a neutral panel and DON'T log it.
   const [caseGone, setCaseGone] = useState(false)
+  const router = useRouter()
+  const [deleting, setDeleting] = useState(false)
 
   // Live clock so the SLA chip recomputes on its own as time passes.
   const [now, setNow] = useState(() => new Date())
@@ -935,6 +938,34 @@ export default function CaseThread({
     }
   }
 
+  // Admin-only hard delete: wipes the case + its entire history and storage,
+  // then leaves the view. Confirmed because it's irreversible.
+  const deleteCase = async () => {
+    if (currentUserRole !== 'admin') return
+    const label = caseDetail?.caseNumber ?? 'this case'
+    if (
+      !window.confirm(
+        `Permanently delete ${label}? This removes the case, its entire history, all attachments, and the scan files from storage. This cannot be undone.`
+      )
+    )
+      return
+    setDeleting(true)
+    try {
+      const res = await fetch(`/api/portal/cases/${caseId}`, { method: 'DELETE' })
+      if (res.ok) {
+        track('case_delete', { caseId })
+        window.dispatchEvent(new Event('cases:changed'))
+        router.push('/portal/cases')
+        return // navigating away — keep the button disabled
+      }
+      const data = await res.json().catch(() => ({}))
+      reportClientError('case_delete', caseId, data.error ?? 'case delete failed', { status: res.status })
+    } catch (e) {
+      reportClientError('case_delete', caseId, e instanceof Error ? e.message : 'case delete failed', {})
+    }
+    setDeleting(false)
+  }
+
   if (loading) {
     return (
       <p className="text-gray-500">Loading case…</p>
@@ -1151,6 +1182,19 @@ export default function CaseThread({
                   <StatusIcon status={caseDetail.status} className="w-3.5 h-3.5" />
                   {STATUS_META[caseDetail.status].label}
                 </span>
+              )}
+              {currentUserRole === 'admin' && (
+                <button
+                  type="button"
+                  onClick={deleteCase}
+                  data-intent="case_delete"
+                  disabled={deleting}
+                  title="Permanently delete this case and all its files"
+                  className="inline-flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 transition disabled:opacity-60"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M4 6h12M8.5 6V4.5h3V6m-6 0 .6 9a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-9" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  {deleting ? 'Deleting…' : 'Delete'}
+                </button>
               )}
               {/* Escalate-to-video hook (feature #3 — not wired yet) */}
               <button
@@ -1448,18 +1492,18 @@ export default function CaseThread({
           </div>
         </form>
         {maximized && typeof document !== 'undefined' && createPortal(
-          <div className="fixed inset-0 z-[60] flex flex-col bg-slate-950/95 backdrop-blur-sm">
-            <div className="flex items-center justify-between gap-4 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-slate-100">
-              <span className="min-w-0 flex-1 truncate text-sm font-medium">{maximized.name}</span>
+          <div className="fixed inset-0 z-[60] flex flex-col overflow-hidden bg-slate-950/95 backdrop-blur-sm">
+            <div className="flex items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-slate-100">
               <button
                 type="button"
                 data-intent="viewer_close"
                 onClick={() => setMaximized(null)}
                 className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm text-white transition hover:bg-white/20"
               >
-                Close
                 <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
+                Close
               </button>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">{maximized.name}</span>
             </div>
             <div className="min-h-0 flex-1">
               {isModelFile(maximized.name) ? (
@@ -1486,18 +1530,18 @@ export default function CaseThread({
           document.body
         )}
         {maximizedPreview && typeof document !== 'undefined' && createPortal(
-          <div className="fixed inset-0 z-[60] flex flex-col bg-slate-950/95 backdrop-blur-sm">
-            <div className="flex items-center justify-between gap-4 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-slate-100">
-              <span className="min-w-0 flex-1 truncate text-sm font-medium">{displayName(maximizedPreview.name)}</span>
+          <div className="fixed inset-0 z-[60] flex flex-col overflow-hidden bg-slate-950/95 backdrop-blur-sm">
+            <div className="flex items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-slate-100">
               <button
                 type="button"
                 data-intent="viewer_close"
                 onClick={() => setMaximizedPreview(null)}
                 className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm text-white transition hover:bg-white/20"
               >
-                Close
                 <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
+                Close
               </button>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">{displayName(maximizedPreview.name)}</span>
             </div>
             <div className="min-h-0 flex-1">
               <ScanViewer

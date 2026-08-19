@@ -100,7 +100,9 @@ aws iam put-role-policy --role-name "$APP_ROLE" --policy-name attachment-s3 --po
 ```
 
 > Presigning is a local crypto op (no S3 call), but `HeadObject` (upload verification) and the
-> presigned **GET** on read both require these permissions on the role.
+> presigned **GET** on read both require these permissions on the role. `DeleteObject` +
+> `ListBucket` here also power the **admin case purge**, which wipes
+> `case-attachments/cases/<id>/` when a case is deleted.
 
 ---
 
@@ -159,7 +161,9 @@ AWS_REGION=us-east-1
 ```
 
 The portal's IAM role (EC2 instance role) needs **list + read** on the scan
-bucket's GLB output — a *different* principal from the Lambda's role:
+bucket's GLB output, plus **delete** on the raw + glb prefixes so the admin case
+purge can remove a case's source scan and previews — a *different* principal from
+the Lambda's role:
 
 ```json
 {
@@ -169,7 +173,12 @@ bucket's GLB output — a *different* principal from the Lambda's role:
       "Resource": "arn:aws:s3:::jdlab-scans-prod-use1",
       "Condition": { "StringLike": { "s3:prefix": ["scans/glb/*"] } } },
     { "Sid": "ReadGlb", "Effect": "Allow", "Action": ["s3:GetObject"],
-      "Resource": "arn:aws:s3:::jdlab-scans-prod-use1/scans/glb/*" }
+      "Resource": "arn:aws:s3:::jdlab-scans-prod-use1/scans/glb/*" },
+    { "Sid": "PurgeScanArtifacts", "Effect": "Allow", "Action": ["s3:DeleteObject"],
+      "Resource": [
+        "arn:aws:s3:::jdlab-scans-prod-use1/scans/raw/*",
+        "arn:aws:s3:::jdlab-scans-prod-use1/scans/glb/*"
+      ] }
   ]
 }
 ```

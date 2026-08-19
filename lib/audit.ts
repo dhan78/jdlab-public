@@ -16,6 +16,7 @@ export type AuditAction =
   | 'case.create'
   | 'case.status_change'
   | 'case.scan_received'
+  | 'case.delete'
   | 'message.create'
   | 'doctor.create'
   | 'doctor.delete'

@@ -2,7 +2,7 @@ import { db } from './db'
 import { cases, caseMessages, messageAttachments, caseStatusHistory, users, caseReads, auditLog, caseAnnotations } from './db/schema'
 import { and, asc, desc, eq, gt, inArray, isNull, isNotNull, or, sql } from 'drizzle-orm'
 import { encodeCaseId, decodeCaseId } from './case-code'
-import { isS3Enabled, putAttachment, getAttachmentUrl, parseDataUrl } from './storage'
+import { isS3Enabled, putAttachment, getAttachmentUrl, parseDataUrl, deleteCaseAttachments, deleteScanArtifacts } from './storage'
 import type { CaseStatus, CaseType } from './case-meta'
 
 // Re-export the shared metadata so existing imports from '@/lib/case-store' keep working.
@@ -529,6 +529,23 @@ export async function deleteCase(caseId: string): Promise<void> {
   const cid = decodeCaseId(caseId)
   if (cid < 0) return
   await db.delete(cases).where(eq(cases.id, cid))
+}
+
+// Admin hard-delete: wipe the case, its thread + status history (DB cascade),
+// ALL S3 attachments, and the source raw scan + GLB previews — so no storage is
+// left anywhere in AWS. S3 is cleared first (idempotent) so a failure leaves the
+// DB row intact for a retry. Returns null if the case doesn't exist.
+export async function purgeCase(
+  caseId: string
+): Promise<{ attachmentsDeleted: number; scanObjectsDeleted: number } | null> {
+  const cid = decodeCaseId(caseId)
+  if (cid < 0) return null
+  const [row] = await db.select().from(cases).where(eq(cases.id, cid)).limit(1)
+  if (!row) return null
+  const attachmentsDeleted = isS3Enabled() ? await deleteCaseAttachments(caseId) : 0
+  const scanObjectsDeleted = await deleteScanArtifacts(row.scanCaseId)
+  await db.delete(cases).where(eq(cases.id, cid))
+  return { attachmentsDeleted, scanObjectsDeleted }
 }
 
 // --- 3D surface annotations (pins on a specific model attachment) ---

@@ -9,6 +9,7 @@ import {
   setScanReceived,
   getUnreadCounts,
   isCasePinned,
+  purgeCase,
   CASE_STATUSES,
   CASE_STATUS_LABELS,
   CASE_TYPES,
@@ -219,4 +220,40 @@ export async function PATCH(
   })()
 
   return NextResponse.json({ success: true, case: updated })
+}
+
+// DELETE: admin-only hard delete. Purges the case, its thread + status history
+// (DB cascade), all S3 attachments, and the source raw scan + GLB previews, so
+// no storage is left anywhere in AWS.
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params
+  const session = await getSession(request)
+  if (!session) {
+    return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
+  }
+  if (session.role !== 'admin') {
+    return NextResponse.json({ error: 'Only an admin can delete a case' }, { status: 403 })
+  }
+
+  const caseRow = await findCaseById(id)
+  if (!caseRow) {
+    return NextResponse.json({ error: 'Case not found' }, { status: 404 })
+  }
+
+  const result = await purgeCase(id)
+
+  await recordAudit({
+    actorId: session.sub,
+    actorRole: session.role,
+    action: 'case.delete',
+    // No caseToken: the row is gone, so link nothing (avoids a dangling FK);
+    // the identity lives in `detail` for the compliance trail.
+    detail: `purged ${caseRow.caseNumber} (${id}): attachments=${result?.attachmentsDeleted ?? 0}, scanObjects=${result?.scanObjectsDeleted ?? 0}`,
+    ip: clientIp(request),
+  })
+
+  return NextResponse.json({ success: true, ...(result ?? {}) })
 }

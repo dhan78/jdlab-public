@@ -12,6 +12,7 @@ import {
   GetObjectCommand,
   CopyObjectCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
 } from '@aws-sdk/client-s3'
@@ -123,6 +124,47 @@ export async function deleteAttachment(key: string): Promise<void> {
   await client().send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }))
 }
 
+// List every object key under a prefix (paginated).
+async function listAllKeys(bucket: string, prefix: string): Promise<string[]> {
+  const keys: string[] = []
+  let token: string | undefined
+  do {
+    const res = await client().send(
+      new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, ContinuationToken: token })
+    )
+    for (const o of res.Contents ?? []) if (o.Key) keys.push(o.Key)
+    token = res.IsTruncated ? res.NextContinuationToken : undefined
+  } while (token)
+  return keys
+}
+
+// Batch-delete keys (1000 per DeleteObjects call).
+async function deleteKeys(bucket: string, keys: string[]): Promise<number> {
+  let deleted = 0
+  for (let i = 0; i < keys.length; i += 1000) {
+    const chunk = keys.slice(i, i + 1000)
+    await client().send(
+      new DeleteObjectsCommand({
+        Bucket: bucket,
+        Delete: { Objects: chunk.map(Key => ({ Key })), Quiet: true },
+      })
+    )
+    deleted += chunk.length
+  }
+  return deleted
+}
+
+/** Hard-delete ALL of a case's attachment objects (`case-attachments/cases/<id>/`).
+ *  Used by the admin case purge. No-op without S3. Guards against an empty/broad
+ *  prefix so it can never wipe the whole bucket. */
+export async function deleteCaseAttachments(caseId: string | number): Promise<number> {
+  if (!BUCKET) return 0
+  const prefix = caseKeyPrefix(caseId)
+  if (!prefix.startsWith(`${PREFIX}cases/`) || prefix.endsWith('/cases/')) return 0
+  const keys = await listAllKeys(BUCKET, prefix)
+  return keys.length ? deleteKeys(BUCKET, keys) : 0
+}
+
 // Presigned PUT URL for a DIRECT browser upload (bypasses the JSON body / base64
 // cap). At-rest encryption comes from the bucket's DEFAULT SSE (set in the
 // deploy runbook); the browser sets the object's Content-Type at PUT time so an
@@ -188,4 +230,22 @@ export async function resolveGlbPreviews(externalId?: string | null): Promise<Gl
   } catch {
     return []
   }
+}
+
+/** Hard-delete a case's SOURCE scan artifacts from the scan bucket: the raw
+ *  scan (`scans/raw/<key>`) and every derived GLB preview (`scans/glb/<stem>…`).
+ *  Used by the admin case purge so no scan storage is left in AWS. No-op when
+ *  the scan bucket isn't configured or the externalId isn't an s3: raw key. */
+export async function deleteScanArtifacts(externalId?: string | null): Promise<number> {
+  if (!SCAN_BUCKET) return 0
+  const rawKey = scanRawKeyFromExternalId(externalId, SCAN_RAW_PREFIX)
+  if (!rawKey) return 0
+  const stem = rawKey.slice(SCAN_RAW_PREFIX.length).replace(/\.[^./]+$/, '')
+  const glbKeys = (await listAllKeys(SCAN_BUCKET, `${SCAN_GLB_PREFIX}${stem}`)).filter(k => {
+    // Only this scan's GLBs: `<stem>.glb` or a `<stem>/…` fan-out folder — never
+    // a sibling whose stem merely starts with the same characters.
+    const rest = k.slice(SCAN_GLB_PREFIX.length)
+    return rest === `${stem}.glb` || rest.startsWith(`${stem}/`)
+  })
+  return deleteKeys(SCAN_BUCKET, [rawKey, ...glbKeys])
 }
