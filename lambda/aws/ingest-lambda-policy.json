@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "HeadRawScans",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": "arn:aws:s3:::<SCAN_BUCKET>/scans/raw/*"
+    },
+    {
+      "Sid": "ConsumeIngestQueue",
+      "Effect": "Allow",
+      "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"],
+      "Resource": "arn:aws:sqs:<REGION>:<ACCOUNT_ID>:jdlab-scan-ingest"
+    }
+  ]
+}

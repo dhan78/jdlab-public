@@ -10,7 +10,8 @@ here at package time).
 - Conversion core: `convert-scan.mjs` (vendored from `../scripts/convert-scan.mjs`)
 - Runtime: **Node.js 22**, **x86_64**, 4096 MB, 300 s timeout
 - Bucket: `jdlab-scans-prod-use1` (us-east-1); reads `scans/raw/`, writes `scans/glb/`
-- IAM / S3 wiring: [`aws/`](aws/) (trust policy, S3 read/write policy, bucket notification)
+- IAM / S3 wiring: [`aws/`](aws/) (trust policy, S3 read/write policy); the
+  trigger is the EventBridge fan-out — see "Event-driven ingest" below
 
 > **Build host matters:** the bundle contains a native `sharp`/libvips binary
 > (pulled in transitively by `@gltf-transform/functions`), so it **must be built
@@ -133,19 +134,10 @@ Only needed once. `SCAN_BUCKET=jdlab-scans-prod-use1`, `REGION=us-east-1`,
      --code S3Bucket=jdlab-scans-prod-use1,S3Key=deploy/lambda.zip \
      --memory-size 4096 --timeout 300 --architectures x86_64 --region us-east-1
    ```
-4. **Allow S3 to invoke it:**
-   ```bash
-   aws lambda add-permission --function-name jdlab-scan-convert \
-     --statement-id s3invoke --action lambda:InvokeFunction \
-     --principal s3.amazonaws.com \
-     --source-arn arn:aws:s3:::jdlab-scans-prod-use1 --region us-east-1
-   ```
-5. **Wire the S3 trigger** (filters `scans/raw/` + `.stl`/`.ply`/`.zip`):
-   ```bash
-   sed -i "s|<REGION>|us-east-1|g; s|<ACCOUNT_ID>|$ACCOUNT_ID|g" aws/s3-notify.json
-   aws s3api put-bucket-notification-configuration --bucket jdlab-scans-prod-use1 \
-     --notification-configuration file://aws/s3-notify.json
-   ```
+4. **Wire the trigger** — the conversion Lambda is invoked by the **EventBridge
+   fan-out rule**, not a direct S3 notification. Set up the bucket→EventBridge
+   switch, the rule, and the `events.amazonaws.com` invoke permission in the
+   **Event-driven ingest** section below (steps 1 and 4).
 
 ---
 
@@ -209,3 +201,167 @@ aws lambda update-function-code --function-name jdlab-scan-convert \
   The Lambda itself is complete.
 - **CBCT-sized files:** if large CBCT/DICOM inputs are added later, revisit the
   4 GB / 300 s sizing and the S3 multipart upload path.
+
+---
+
+# Event-driven ingest (replaces the 60 s poller)
+
+A Python worker used to poll `scans/raw/` every 60 s to create portal cases; it
+has been **removed** in favor of a **second Lambda**
+([`ingest-case.mjs`](ingest-case.mjs)) fed by an **EventBridge fan-out** — so a
+scan landing in `scans/raw/` triggers both branches at once, with **no polling**:
+
+```text
+s3://<bucket>/scans/raw/…  --ObjectCreated-->  EventBridge (rule: jdlab-scan-fanout)
+      ├─► jdlab-scan-convert  (raw → scans/glb/ GLB preview)
+      └─► SQS jdlab-scan-ingest ─► jdlab-scan-ingest Lambda ─► POST /api/ingest/cases
+                     └─► DLQ jdlab-scan-ingest-dlq (unmapped / poison → human review + replay)
+```
+
+The two branches are independent: a case is created even if GLB conversion
+fails. Idempotency is `externalId = s3:<key>:<etag>` (the portal dedupes), which
+makes SQS's at-least-once redelivery safe.
+
+> The ingest Lambda has **no bundled deps** (`@aws-sdk/client-s3` + `fetch` are
+> in the Node 22 runtime), so it deploys as the single `ingest-case.mjs` file —
+> no CloudShell build, no `node_modules`, no platform gotchas.
+
+Set once: `SCAN_BUCKET=jdlab-scans-prod-use1`, `REGION=us-east-1`,
+`ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)`,
+`PORTAL_BASE_URL=https://jdlab.us`, and `INGEST_API_TOKEN` = the portal's token.
+
+### 1. Turn on EventBridge notifications for the bucket
+
+```bash
+aws s3api put-bucket-notification-configuration --bucket $SCAN_BUCKET \
+  --notification-configuration '{"EventBridgeConfiguration":{}}'
+```
+
+> If the bucket still has a **legacy direct S3→Lambda notification** pointing at
+> `jdlab-scan-convert`, clear it (`put-bucket-notification-configuration` with an
+> empty `LambdaFunctionConfigurations`): conversion now runs as an EventBridge
+> target (step 4), so leaving the old notification would double-trigger convert.
+
+### 2. Create the DLQ + ingest queue (redrive after 5 receives)
+
+```bash
+DLQ_URL=$(aws sqs create-queue --queue-name jdlab-scan-ingest-dlq \
+  --attributes MessageRetentionPeriod=1209600 \
+  --query QueueUrl --output text --region $REGION)
+DLQ_ARN=$(aws sqs get-queue-attributes --queue-url "$DLQ_URL" \
+  --attribute-names QueueArn --query Attributes.QueueArn --output text --region $REGION)
+
+QUEUE_URL=$(aws sqs create-queue --queue-name jdlab-scan-ingest --attributes "$(cat <<JSON
+{ "VisibilityTimeout": "330",
+  "MessageRetentionPeriod": "345600",
+  "RedrivePolicy": "{\"deadLetterTargetArn\":\"$DLQ_ARN\",\"maxReceiveCount\":\"5\"}" }
+JSON
+)" --query QueueUrl --output text --region $REGION)
+QUEUE_ARN=$(aws sqs get-queue-attributes --queue-url "$QUEUE_URL" \
+  --attribute-names QueueArn --query Attributes.QueueArn --output text --region $REGION)
+```
+
+> VisibilityTimeout (330 s) must be **≥ the Lambda timeout** (300 s) + margin.
+
+### 3. Let EventBridge send to the queue (queue resource policy)
+
+```bash
+sed "s|<REGION>|$REGION|g; s|<ACCOUNT_ID>|$ACCOUNT_ID|g" aws/ingest-queue-policy.json > /tmp/ingest-queue-policy.json
+# Policy must be passed as a JSON attribute map (a stringified policy), not the
+# CLI Key=Value shorthand — the raw JSON's commas break shorthand parsing.
+aws sqs set-queue-attributes --queue-url "$QUEUE_URL" --region $REGION \
+  --attributes "$(jq -n --arg p "$(cat /tmp/ingest-queue-policy.json)" '{Policy:$p}')"
+```
+
+### 4. Create the EventBridge rule + both targets
+
+```bash
+sed "s|<SCAN_BUCKET>|$SCAN_BUCKET|g" aws/ingest-eventbridge-pattern.json > /tmp/pattern.json
+aws events put-rule --name jdlab-scan-fanout --region $REGION \
+  --event-pattern file:///tmp/pattern.json
+
+# Target 1: the existing conversion Lambda. Target 2: the ingest SQS queue.
+aws events put-targets --rule jdlab-scan-fanout --region $REGION --targets \
+  "Id=convert,Arn=arn:aws:lambda:$REGION:$ACCOUNT_ID:function:jdlab-scan-convert" \
+  "Id=ingest,Arn=$QUEUE_ARN"
+
+# Allow the rule to invoke the conversion Lambda (queue perm was step 3).
+aws lambda add-permission --function-name jdlab-scan-convert \
+  --statement-id eb-fanout --action lambda:InvokeFunction \
+  --principal events.amazonaws.com --region $REGION \
+  --source-arn arn:aws:events:$REGION:$ACCOUNT_ID:rule/jdlab-scan-fanout
+```
+
+### 5. Deploy the ingest Lambda (single file — no build)
+
+```bash
+zip -j /tmp/ingest.zip ingest-case.mjs
+
+sed "s|<SCAN_BUCKET>|$SCAN_BUCKET|g; s|<REGION>|$REGION|g; s|<ACCOUNT_ID>|$ACCOUNT_ID|g" \
+  aws/ingest-lambda-policy.json > /tmp/ingest-lambda-policy.json
+aws iam create-role --role-name jdlab-scan-ingest \
+  --assume-role-policy-document file://aws/trust.json
+aws iam attach-role-policy --role-name jdlab-scan-ingest \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+aws iam put-role-policy --role-name jdlab-scan-ingest \
+  --policy-name ingest-perms --policy-document file:///tmp/ingest-lambda-policy.json
+
+aws lambda create-function --function-name jdlab-scan-ingest \
+  --runtime nodejs22.x --handler ingest-case.handler \
+  --role arn:aws:iam::$ACCOUNT_ID:role/jdlab-scan-ingest \
+  --zip-file fileb:///tmp/ingest.zip \
+  --memory-size 256 --timeout 300 --architectures arm64 --region $REGION \
+  --environment "Variables={PORTAL_BASE_URL=$PORTAL_BASE_URL,INGEST_API_TOKEN=$INGEST_API_TOKEN}"
+```
+
+> Store `INGEST_API_TOKEN` in SSM/Secrets Manager and reference it instead of
+> passing it inline in production.
+
+### 6. Wire SQS → ingest Lambda (with partial-batch failures)
+
+```bash
+aws lambda create-event-source-mapping --function-name jdlab-scan-ingest \
+  --event-source-arn "$QUEUE_ARN" --batch-size 10 \
+  --function-response-types ReportBatchItemFailures --region $REGION
+```
+
+`ReportBatchItemFailures` lets one bad message retry without re-running the
+whole batch; after `maxReceiveCount` (5) it lands in `jdlab-scan-ingest-dlq`.
+
+### Redeploy the ingest Lambda after a code change
+
+```bash
+zip -j /tmp/ingest.zip ingest-case.mjs
+aws lambda update-function-code --function-name jdlab-scan-ingest \
+  --zip-file fileb:///tmp/ingest.zip --region $REGION
+```
+
+### Manual test (no trigger)
+
+```bash
+cat > /tmp/ev.json <<JSON
+{ "detail-type":"Object Created", "source":"aws.s3",
+  "detail": { "bucket": { "name":"$SCAN_BUCKET" },
+    "object": { "key":"scans/raw/lindqvist/test.stl", "etag":"abc123", "size":1024 } } }
+JSON
+aws lambda invoke --function-name jdlab-scan-ingest \
+  --payload file:///tmp/ev.json --cli-binary-format raw-in-base64-out \
+  --region $REGION /tmp/out.json
+cat /tmp/out.json
+aws logs tail /aws/lambda/jdlab-scan-ingest --follow --format short --region $REGION
+```
+
+### Operational notes
+
+- **Unmapped practice / no account** (portal `409`/`422`): the message retries
+  then DLQs — it is **never silently dropped**. Map the practice in the portal,
+  then replay the DLQ back onto `jdlab-scan-ingest`.
+- **No file relocation:** unlike the poller, this never moves raw scans out of
+  `scans/raw/` (there's no LIST to keep cheap). Add an **S3 lifecycle rule** to
+  expire/transition `scans/raw/` after N days if storage growth matters.
+- **Alarms:** watch `ApproximateNumberOfMessagesVisible` on the DLQ and the
+  ingest Lambda `Errors` metric.
+- The former Python `ingestion/` polling worker has been **removed** — ingestion
+  is now entirely this Lambda (no always-on container). For local dev, POST a
+  synthetic case straight to `/api/ingest/cases` (see the smoke test) or invoke
+  this function with a synthetic event (above).

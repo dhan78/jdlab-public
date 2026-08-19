@@ -109,26 +109,8 @@ services:
       - app
       - outline
 
-  # --- Scan ingestion worker (Python; see ../ingestion) ---
-  # Polls a source (local folder / S3 dropbox) for new scans and creates cases
-  # via the token-guarded /api/ingest/cases endpoint, which hands off to the
-  # S3 -> GLB conversion Lambda. Idempotent end-to-end.
-  ingestion:
-    image: ghcr.io/dhan78/jdlab-public-ingestion:latest
-    container_name: jdlab-ingestion
-    restart: unless-stopped
-    env_file: [/home/ec2-user/temp/ingestion.env]   # SSM /jdlab/ingestion/ (INGEST_API_TOKEN + INGEST_* config)
-    environment:
-      - PORTAL_BASE_URL=http://nextjs:3000
-      - AWS_REGION=us-east-1
-      # Ephemeral ledger (no volume): the portal DB is the real dedupe
-      # (findCaseIdByExternalId), so a reset ledger never creates duplicates.
-      - INGEST_LEDGER_PATH=/tmp/jdlab-ingest/seen.json
-    # No volumes: S3-source only. For INGEST_SOURCE=local, add a drop folder:
-    #   volumes: [ ./ingest-inbox:/inbox:z ]
-    depends_on:
-      db: { condition: service_healthy }
-      nextjs: { condition: service_started }
+# Ingestion is serverless: an S3 EventBridge fan-out invokes the jdlab-scan-ingest
+# Lambda (see ../lambda/ingest-case.mjs). No ingestion container runs here.
 
 # Postgres backups run on the HOST via cron, not a container — see
 # ./jdlab-backup.sh (docker exec pg_dumpall -> gzip -> S3). Keeps the micro

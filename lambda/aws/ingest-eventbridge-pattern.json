@@ -1,0 +1,8 @@
+{
+  "source": ["aws.s3"],
+  "detail-type": ["Object Created"],
+  "detail": {
+    "bucket": { "name": ["<SCAN_BUCKET>"] },
+    "object": { "key": [{ "prefix": "scans/raw/" }] }
+  }
+}

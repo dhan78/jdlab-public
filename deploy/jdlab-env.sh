@@ -30,6 +30,8 @@ render "/jdlab/"          "$DIR/nextjs.env"
 render "/jdlab/db/"       "$DIR/db.env"
 render "/jdlab/prostore/" "$DIR/prostore.env"
 render "/jdlab/outline/"  "$DIR/outline.env"
-render "/jdlab/ingestion/" "$DIR/ingestion.env"   # scan ingestion worker (INGEST_API_TOKEN must ALSO be under /jdlab/ for nextjs)
+# Ingestion is serverless now (jdlab-scan-ingest Lambda); no ingestion.env needed.
+# INGEST_API_TOKEN stays under /jdlab/ (nextjs.env) so the portal validates the
+# Lambda's bearer token; the Lambda gets the same token from its own env.
 
 echo "SSM parameters loaded into $DIR"

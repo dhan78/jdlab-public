@@ -15,7 +15,7 @@
  * Import this ONLY via `next/dynamic` with `{ ssr: false }` — it needs WebGL and
  * must not run during server rendering. See app/scans/viewer/page.tsx.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls, Html, Bounds, useBounds, Line } from '@react-three/drei'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
@@ -729,6 +729,16 @@ function Overlay({ children, tone }: { children: React.ReactNode; tone?: 'error'
   )
 }
 
+// Coordinates the single "live" touch-activated inline viewer across all
+// instances on the page: activating one re-arms every other (only one canvas
+// ever captures swipes at a time). Module-level so viewers need no shared parent.
+let activeViewerId: string | null = null
+const viewerListeners = new Set<(id: string | null) => void>()
+function setActiveViewer(id: string | null) {
+  activeViewerId = id
+  viewerListeners.forEach(fn => fn(id))
+}
+
 export default function ScanViewer({
   url,
   file,
@@ -762,6 +772,8 @@ export default function ScanViewer({
   // page scrolling, so overlay a "tap to interact" scrim until the user opts in.
   const [coarsePointer, setCoarsePointer] = useState(false)
   const [touchActivated, setTouchActivated] = useState(false)
+  const viewerId = useId()
+  const rootRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return
     const mq = window.matchMedia('(pointer: coarse)')
@@ -770,6 +782,35 @@ export default function ScanViewer({
     mq.addEventListener?.('change', update)
     return () => mq.removeEventListener?.('change', update)
   }, [])
+  // Activating this viewer re-arms every other one, so only one captures swipes.
+  useEffect(() => {
+    const onActiveChange = (id: string | null) => {
+      if (id !== viewerId) setTouchActivated(false)
+    }
+    viewerListeners.add(onActiveChange)
+    return () => {
+      viewerListeners.delete(onActiveChange)
+      if (activeViewerId === viewerId) setActiveViewer(null)
+    }
+  }, [viewerId])
+  // Re-arm the gate when the viewer scrolls out of view, so returning to it
+  // needs an explicit tap again and page scroll is never left trapped.
+  useEffect(() => {
+    if (!gateTouch || !coarsePointer) return
+    const el = rootRef.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) {
+          setTouchActivated(false)
+          if (activeViewerId === viewerId) setActiveViewer(null)
+        }
+      },
+      { threshold: 0.1 },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [gateTouch, coarsePointer, viewerId])
   const touchGateActive = gateTouch && coarsePointer && !touchActivated
   const pins = annotations ?? []
   // Any authoring (pins AND the measure tool, which persists via onCreateAnnotation)
@@ -890,7 +931,7 @@ export default function ScanViewer({
   }, [url, file])
 
   return (
-    <div className={`relative ${className ?? ''} ${measureMode || addMode ? '[&_canvas]:!cursor-crosshair' : ''}`}>
+    <div ref={rootRef} className={`relative ${className ?? ''} ${measureMode || addMode ? '[&_canvas]:!cursor-crosshair' : ''}`}>
       <Canvas frameloop="demand" dpr={[1, 2]} camera={{ position: [0, 0, 3], fov: 45 }}>
         <color attach="background" args={['#0e1626']} />
         <ambientLight intensity={0.65} />
@@ -997,10 +1038,13 @@ export default function ScanViewer({
         <button
           type="button"
           data-intent="viewer_touch_activate"
-          onClick={() => setTouchActivated(true)}
+          onClick={() => {
+            setTouchActivated(true)
+            setActiveViewer(viewerId)
+          }}
           style={{ touchAction: 'pan-y' }}
           aria-label="Tap to interact with the 3D model"
-          className="absolute inset-0 flex items-end justify-center pb-3"
+          className="absolute inset-0 z-20 flex items-end justify-center pb-3"
         >
           <span className="pointer-events-none rounded-full bg-black/55 px-3 py-1 text-xs font-medium text-white/90 backdrop-blur-sm">
             Tap to interact · swipe to scroll
@@ -1010,7 +1054,7 @@ export default function ScanViewer({
 
       {/* Annotation + measure controls. */}
       {!error && (geometry || scene) && !touchGateActive && (
-        <div className="absolute left-2 top-2 flex items-center gap-2">
+        <div className="absolute left-2 top-2 z-20 flex flex-wrap items-center gap-2">
           {canAnnotate && (
             <button
               type="button"
@@ -1087,7 +1131,7 @@ export default function ScanViewer({
             setResetNonce(n => n + 1)
           }}
           title="Reset the camera to the default framing"
-          className="absolute bottom-2 right-2 rounded-lg bg-black/40 px-2.5 py-1.5 text-xs text-white/80 backdrop-blur-sm transition hover:bg-black/60"
+          className="absolute bottom-2 right-2 z-20 rounded-lg bg-black/40 px-2.5 py-1.5 text-xs text-white/80 backdrop-blur-sm transition hover:bg-black/60"
         >
           Reset view
         </button>

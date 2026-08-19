@@ -10,8 +10,8 @@
  * to the converter via `resolveAsset`.
  *
  * Recursion guard: we only process keys under RAW_PREFIX and always write under
- * GLB_PREFIX, so the output never re-triggers the function. The S3 notification
- * filter should ALSO restrict by prefix/suffix (see aws/s3-notify.json).
+ * GLB_PREFIX, so the output never re-triggers the function. The EventBridge rule
+ * ALSO restricts by prefix (see aws/ingest-eventbridge-pattern.json).
  *
  * Env:
  *   GLB_BUCKET   destination bucket (default: the source bucket)

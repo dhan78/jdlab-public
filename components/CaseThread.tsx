@@ -1450,12 +1450,12 @@ export default function CaseThread({
         {maximized && typeof document !== 'undefined' && createPortal(
           <div className="fixed inset-0 z-[60] flex flex-col bg-slate-950/95 backdrop-blur-sm">
             <div className="flex items-center justify-between gap-4 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-slate-100">
-              <span className="truncate text-sm font-medium">{maximized.name}</span>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">{maximized.name}</span>
               <button
                 type="button"
                 data-intent="viewer_close"
                 onClick={() => setMaximized(null)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm text-white transition hover:bg-white/20"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm text-white transition hover:bg-white/20"
               >
                 Close
                 <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
@@ -1488,12 +1488,12 @@ export default function CaseThread({
         {maximizedPreview && typeof document !== 'undefined' && createPortal(
           <div className="fixed inset-0 z-[60] flex flex-col bg-slate-950/95 backdrop-blur-sm">
             <div className="flex items-center justify-between gap-4 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-slate-100">
-              <span className="truncate text-sm font-medium">{displayName(maximizedPreview.name)}</span>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">{displayName(maximizedPreview.name)}</span>
               <button
                 type="button"
                 data-intent="viewer_close"
                 onClick={() => setMaximizedPreview(null)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm text-white transition hover:bg-white/20"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm text-white transition hover:bg-white/20"
               >
                 Close
                 <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
