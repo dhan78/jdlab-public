@@ -955,7 +955,7 @@ export default function CaseThread({
       if (res.ok) {
         track('case_delete', { caseId })
         window.dispatchEvent(new Event('cases:changed'))
-        router.push('/portal/cases')
+        router.push('/portal')
         return // navigating away — keep the button disabled
       }
       const data = await res.json().catch(() => ({}))
@@ -1492,7 +1492,7 @@ export default function CaseThread({
           </div>
         </form>
         {maximized && typeof document !== 'undefined' && createPortal(
-          <div className="fixed inset-0 z-[60] flex flex-col overflow-hidden bg-slate-950/95 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[60] flex flex-col overflow-hidden touch-none overscroll-contain bg-slate-950/95 backdrop-blur-sm">
             <div className="flex items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-slate-100">
               <button
                 type="button"
@@ -1530,7 +1530,7 @@ export default function CaseThread({
           document.body
         )}
         {maximizedPreview && typeof document !== 'undefined' && createPortal(
-          <div className="fixed inset-0 z-[60] flex flex-col overflow-hidden bg-slate-950/95 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[60] flex flex-col overflow-hidden touch-none overscroll-contain bg-slate-950/95 backdrop-blur-sm">
             <div className="flex items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-slate-100">
               <button
                 type="button"

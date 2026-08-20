@@ -165,12 +165,24 @@ async function processOne(bucket, rawKey) {
   }
 }
 
+// Normalize the trigger into {bucket, rawKey} records. Supports the EventBridge
+// "Object Created" shape (detail.*, key NOT url-encoded) AND the classic S3
+// notification shape (Records[].s3, key url-encoded) — so the function works as
+// an EventBridge target OR a direct S3 trigger, and for manual invokes with
+// either payload.
+function eventRecords(event) {
+  if (event?.detail?.bucket) {
+    return [{ bucket: event.detail.bucket.name, rawKey: event.detail.object?.key ?? '' }]
+  }
+  return (event?.Records ?? []).map(r => ({
+    bucket: r.s3?.bucket?.name,
+    rawKey: decodeKey(r.s3?.object?.key ?? ''),
+  }))
+}
+
 export async function handler(event) {
-  const records = event?.Records ?? []
   const results = []
-  for (const r of records) {
-    const bucket = r.s3?.bucket?.name
-    const rawKey = decodeKey(r.s3?.object?.key ?? '')
+  for (const { bucket, rawKey } of eventRecords(event)) {
     if (!bucket || !rawKey) continue
     try {
       await processOne(bucket, rawKey)

@@ -54,6 +54,7 @@ export const INTENTS = {
   case_details_save: 'Save edited case details',
   scans_received_mark: 'Mark scans as received (starts the SLA clock)',
   status_change: 'Change the case status',
+  case_delete: 'Admin: permanently delete a case and all its files',
   call_start: 'Start a live video call (placeholder)',
 
   // --- Attachments / viewers ---
