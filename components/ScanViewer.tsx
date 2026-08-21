@@ -23,7 +23,7 @@ import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
-import { NeutralToneMapping, Vector3 } from 'three'
+import { NeutralToneMapping, Vector3, type WebGLRenderer } from 'three'
 import type { BufferGeometry, Group } from 'three'
 import { scanCacheKey, getScanBytes, putScanBytes } from '@/lib/scan-cache'
 import { loadScanView, saveScanView, clearScanView } from '@/lib/scan-view-state'
@@ -774,6 +774,14 @@ export default function ScanViewer({
   const [touchActivated, setTouchActivated] = useState(false)
   const viewerId = useId()
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const glRef = useRef<WebGLRenderer | null>(null)
+  // Release the WebGL context promptly on unmount so paging through many cases
+  // can't pile up live contexts past the browser cap (~16), which otherwise
+  // makes the browser drop the oldest canvas (model lingers, pins vanish).
+  useEffect(() => () => {
+    try { glRef.current?.forceContextLoss() } catch { /* already disposed */ }
+    glRef.current = null
+  }, [])
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return
     const mq = window.matchMedia('(pointer: coarse)')
@@ -932,7 +940,24 @@ export default function ScanViewer({
 
   return (
     <div ref={rootRef} className={`relative ${className ?? ''} ${measureMode || addMode ? '[&_canvas]:!cursor-crosshair' : ''}`}>
-      <Canvas frameloop="demand" dpr={[1, 2]} camera={{ position: [0, 0, 3], fov: 45 }}>
+      <Canvas
+        frameloop="demand"
+        dpr={[1, 2]}
+        camera={{ position: [0, 0, 3], fov: 45 }}
+        onCreated={({ gl, invalidate }) => {
+          glRef.current = gl
+          const canvas = gl.domElement
+          // A lost context freezes the demand render loop: the model's last frame
+          // stays but the Html pins stop repositioning and disappear. preventDefault
+          // lets the browser RESTORE the context; invalidate() re-renders so the
+          // pins come back. Report the loss so it's visible in telemetry.
+          canvas.addEventListener('webglcontextlost', e => {
+            e.preventDefault()
+            onErrorRef.current?.('webgl_context_lost')
+          })
+          canvas.addEventListener('webglcontextrestored', () => invalidate())
+        }}
+      >
         <color attach="background" args={['#0e1626']} />
         <ambientLight intensity={0.65} />
         <directionalLight position={[4, 5, 6]} intensity={0.9} />

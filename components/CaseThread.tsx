@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -393,6 +393,30 @@ function Lightbox({
   )
 }
 
+// Mounts its (WebGL) child only while near the viewport and unmounts it once
+// scrolled well away, so a case with many 3D previews never holds more than a
+// few live WebGL contexts at once. Browsers cap contexts (~8 on mobile); over
+// the cap the oldest is force-lost and its pins vanish — the bug this prevents.
+function ViewportCanvas({ children, placeholder }: { children: ReactNode; placeholder?: ReactNode }) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [inView, setInView] = useState(false)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      setInView(true)
+      return
+    }
+    const io = new IntersectionObserver(([e]) => setInView(e.isIntersecting), { rootMargin: '300px 0px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+  return (
+    <div ref={ref} className="h-full w-full">
+      {inView ? children : placeholder}
+    </div>
+  )
+}
+
 export default function CaseThread({
   caseId,
   currentUserId,
@@ -456,9 +480,12 @@ export default function CaseThread({
       if (res.ok) {
         const data = await res.json()
         setAnnotations(Array.isArray(data.annotations) ? data.annotations : [])
+      } else {
+        // Surface WHY pins vanished (401/429/5xx) instead of silently dropping them.
+        reportClientError('annotations_load', caseId, `status ${res.status}`, { status: res.status })
       }
-    } catch {
-      /* non-fatal: the viewer still works without pins */
+    } catch (e) {
+      reportClientError('annotations_load', caseId, e instanceof Error ? e.message : 'annotations load failed')
     }
   }, [caseId])
 
@@ -1223,6 +1250,7 @@ export default function CaseThread({
               {glbPreviews.map(p => (
                 <div key={p.id} className="overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
                   <div className="relative h-64 sm:h-72">
+                    <ViewportCanvas placeholder={<div className="flex h-full w-full items-center justify-center text-sm text-slate-400">3D preview · scroll to load</div>}>
                     <ScanViewer
                       url={p.url}
                       gateTouch
@@ -1234,6 +1262,7 @@ export default function CaseThread({
                       onLoad={source => track('scan_view', { caseId, ext: 'glb', size: p.size, source })}
                       onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: 'glb', size: p.size })}
                     />
+                    </ViewportCanvas>
                     <button
                       type="button"
                       data-intent="viewer_maximize"
@@ -1304,6 +1333,7 @@ export default function CaseThread({
                         ) : isModelFile(a.name) ? (
                           <div key={a.id} className="basis-full">
                             <div className="group relative h-64 sm:h-72 w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
+                              <ViewportCanvas placeholder={<div className="flex h-full w-full items-center justify-center text-sm text-slate-400">3D scan · scroll to load</div>}>
                               <ScanViewer
                                 url={a.dataUrl}
                                 gateTouch
@@ -1315,6 +1345,7 @@ export default function CaseThread({
                                 onLoad={source => track('scan_view', { caseId, ext: a.name.split('.').pop()?.toLowerCase(), size: a.size, source })}
                                 onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: a.name.split('.').pop()?.toLowerCase(), size: a.size })}
                               />
+                              </ViewportCanvas>
                               <button
                                 type="button"
                                 data-intent="viewer_maximize"

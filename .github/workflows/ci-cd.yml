@@ -38,6 +38,10 @@ jobs:
       - name: Type Check
         run: npm run type-check
 
+      #- name: Test
+      #  run: npm run test
+
+
   # 2. CD Job: Build Docker Image and Publish to GitHub Container Registry (GHCR)
   build-and-push-docker: 
     needs: validate-and-test 
