@@ -488,8 +488,9 @@ function GlbScene({
       {/* Restore this scan's saved view if present, else frame ONCE per scene
           (never on every render, so toggling measure / placing a pin doesn't
           reset the user's orbit/pan/zoom). Geometry is NOT rescaled, so world
-          hit points stay in real millimetres. */}
-      <Bounds clip margin={1.2}>
+          hit points stay in real millimetres. maxDuration={0} snaps the fit
+          instantly — no camera fly-in animation on load. */}
+      <Bounds clip margin={1.2} maxDuration={0}>
         <RestoreOrFit scene={scene} viewKey={viewKey} resetNonce={resetNonce} />
         <primitive
           object={scene}
@@ -775,10 +776,14 @@ export default function ScanViewer({
   const viewerId = useId()
   const rootRef = useRef<HTMLDivElement | null>(null)
   const glRef = useRef<WebGLRenderer | null>(null)
+  // Set right before we deliberately drop the context on unmount, so the
+  // context-lost handler doesn't report our own teardown as an error.
+  const intentionalLossRef = useRef(false)
   // Release the WebGL context promptly on unmount so paging through many cases
   // can't pile up live contexts past the browser cap (~16), which otherwise
   // makes the browser drop the oldest canvas (model lingers, pins vanish).
   useEffect(() => () => {
+    intentionalLossRef.current = true
     try { glRef.current?.forceContextLoss() } catch { /* already disposed */ }
     glRef.current = null
   }, [])
@@ -953,7 +958,9 @@ export default function ScanViewer({
           // pins come back. Report the loss so it's visible in telemetry.
           canvas.addEventListener('webglcontextlost', e => {
             e.preventDefault()
-            onErrorRef.current?.('webgl_context_lost')
+            // Only a browser-initiated loss (hitting the context cap) is a real
+            // problem; our own forceContextLoss on unmount sets intentionalLossRef.
+            if (!intentionalLossRef.current) onErrorRef.current?.('webgl_context_lost')
           })
           canvas.addEventListener('webglcontextrestored', () => invalidate())
         }}
