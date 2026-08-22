@@ -15,7 +15,8 @@
  * Import this ONLY via `next/dynamic` with `{ ssr: false }` — it needs WebGL and
  * must not run during server rendering. See app/scans/viewer/page.tsx.
  */
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls, Html, Bounds, useBounds, Line } from '@react-three/drei'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
@@ -77,6 +78,10 @@ interface ScanViewerProps {
    *  vertical swipe scrolls the PAGE instead of orbiting the model. For inline
    *  viewers; leave off for the maximized/fullscreen view. */
   gateTouch?: boolean
+  /** Render the annotation controls in a separate document.body portal layer so
+   *  a mobile WebGL canvas (its own GPU layer) can't composite over them. Use
+   *  for the maximized / fullscreen view. */
+  fullscreen?: boolean
   /** Stable per-scan id. When set, the camera pan/zoom/orbit is remembered for
    *  this scan (localStorage) and restored on return — across navigation AND
    *  page reloads — instead of resetting to the framed default. */
@@ -740,6 +745,15 @@ function setActiveViewer(id: string | null) {
   viewerListeners.forEach(fn => fn(id))
 }
 
+// Fullscreen controls render in a separate document.body portal (its own top
+// compositing layer) so a mobile WebGL canvas can never paint over them.
+function OverlayLayer({ fullscreen, children }: { fullscreen: boolean; children: ReactNode }) {
+  if (fullscreen && typeof document !== 'undefined') {
+    return createPortal(<div className="pointer-events-none fixed inset-0 z-[70]">{children}</div>, document.body)
+  }
+  return <>{children}</>
+}
+
 export default function ScanViewer({
   url,
   file,
@@ -751,6 +765,7 @@ export default function ScanViewer({
   onDeleteAnnotation,
   readOnly = false,
   gateTouch = false,
+  fullscreen = false,
   viewKey,
 }: ScanViewerProps) {
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null)
@@ -1088,11 +1103,11 @@ export default function ScanViewer({
         </button>
       )}
 
-      {/* Annotation + measure controls. Shown regardless of the touch scroll-gate
-         (they're taps, not swipes) so they never vanish; lifted above the gate
-         scrim (z-30 > z-20). */}
+      {/* Controls. When fullscreen they render in a SEPARATE document.body portal
+         (OverlayLayer) so the mobile WebGL canvas can't composite over them. */}
+      <OverlayLayer fullscreen={fullscreen}>
       {!error && (geometry || scene) && (
-        <div className="absolute left-2 top-2 z-30 flex flex-wrap items-center gap-2" style={{ transform: 'translateZ(0)' }}>
+        <div className={`absolute left-2 z-30 flex flex-wrap items-center gap-2 ${fullscreen ? 'pointer-events-auto top-[calc(env(safe-area-inset-top,0px)+3.25rem)]' : 'top-2'}`}>
           {canAnnotate && (
             <button
               type="button"
@@ -1171,12 +1186,12 @@ export default function ScanViewer({
             setResetNonce(n => n + 1)
           }}
           title="Reset the camera to the default framing"
-          className="absolute bottom-2 right-2 z-30 rounded-lg bg-black/40 px-2.5 py-1.5 text-xs text-white/80 backdrop-blur-sm transition hover:bg-black/60"
-          style={{ transform: 'translateZ(0)' }}
+          className={`absolute right-2 z-30 rounded-lg bg-black/40 px-2.5 py-1.5 text-xs text-white/80 backdrop-blur-sm transition hover:bg-black/60 ${fullscreen ? 'pointer-events-auto bottom-[max(0.5rem,env(safe-area-inset-bottom))]' : 'bottom-2'}`}
         >
           Reset view
         </button>
       )}
+      </OverlayLayer>
 
       {loading && <Overlay>Loading scan…</Overlay>}
       {error && <Overlay tone="error">{error}</Overlay>}

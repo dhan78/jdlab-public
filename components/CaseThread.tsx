@@ -1538,22 +1538,11 @@ export default function CaseThread({
           </div>
         </form>
         {maximized && typeof document !== 'undefined' && createPortal(
-          <div className="fixed inset-0 z-[60] flex flex-col overflow-hidden touch-none overscroll-contain bg-slate-950">
-            <div className="relative z-10 flex items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-slate-100">
-              <button
-                type="button"
-                data-intent="viewer_close"
-                onClick={() => setMaximized(null)}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm text-white transition hover:bg-white/20"
-              >
-                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
-                Close
-              </button>
-              <span className="min-w-0 flex-1 truncate text-sm font-medium">{maximized.name}</span>
-            </div>
-            <div className="min-h-0 flex-1">
+          <>
+            <div className="fixed inset-0 z-[60] overflow-hidden touch-none overscroll-contain bg-slate-950">
               {isModelFile(maximized.name) ? (
                 <ScanViewer
+                  fullscreen
                   url={maximized.dataUrl}
                   className="h-full w-full"
                   viewKey={`${caseId}:${maximized.id}`}
@@ -1572,25 +1561,27 @@ export default function CaseThread({
                 />
               )}
             </div>
-          </div>,
-          document.body
-        )}
-        {maximizedPreview && typeof document !== 'undefined' && createPortal(
-          <div className="fixed inset-0 z-[60] flex flex-col overflow-hidden touch-none overscroll-contain bg-slate-950">
-            <div className="relative z-10 flex items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-slate-100">
+            {/* Chrome in a separate top compositing layer (z-70) so the WebGL canvas can't cover it on mobile */}
+            <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] flex items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
               <button
                 type="button"
                 data-intent="viewer_close"
-                onClick={() => setMaximizedPreview(null)}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm text-white transition hover:bg-white/20"
+                onClick={() => setMaximized(null)}
+                className="pointer-events-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-sm text-white shadow-lg transition hover:bg-white/25"
               >
                 <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
                 Close
               </button>
-              <span className="min-w-0 flex-1 truncate text-sm font-medium">{displayName(maximizedPreview.name)}</span>
+              <span className="pointer-events-none min-w-0 flex-1 truncate text-sm font-medium text-slate-100 drop-shadow">{maximized.name}</span>
             </div>
-            <div className="min-h-0 flex-1">
+          </>,
+          document.body
+        )}
+        {maximizedPreview && typeof document !== 'undefined' && createPortal(
+          <>
+            <div className="fixed inset-0 z-[60] overflow-hidden touch-none overscroll-contain bg-slate-950">
               <ScanViewer
+                fullscreen
                 url={maximizedPreview.url}
                 className="h-full w-full"
                 viewKey={`${caseId}:glb:${maximizedPreview.id}:max`}
@@ -1601,7 +1592,20 @@ export default function CaseThread({
                 onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: 'glb', size: maximizedPreview.size, maximized: true })}
               />
             </div>
-          </div>,
+            {/* Chrome in a separate top compositing layer (z-70) so the WebGL canvas can't cover it on mobile */}
+            <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] flex items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+              <button
+                type="button"
+                data-intent="viewer_close"
+                onClick={() => setMaximizedPreview(null)}
+                className="pointer-events-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-sm text-white shadow-lg transition hover:bg-white/25"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
+                Close
+              </button>
+              <span className="pointer-events-none min-w-0 flex-1 truncate text-sm font-medium text-slate-100 drop-shadow">{displayName(maximizedPreview.name)}</span>
+            </div>
+          </>,
           document.body
         )}
         {lightbox && (
