@@ -397,7 +397,7 @@ function Lightbox({
 // scrolled well away, so a case with many 3D previews never holds more than a
 // few live WebGL contexts at once. Browsers cap contexts (~8 on mobile); over
 // the cap the oldest is force-lost and its pins vanish — the bug this prevents.
-function ViewportCanvas({ children, placeholder }: { children: ReactNode; placeholder?: ReactNode }) {
+function ViewportCanvas({ children, placeholder, suspended = false }: { children: ReactNode; placeholder?: ReactNode; suspended?: boolean }) {
   const ref = useRef<HTMLDivElement | null>(null)
   const [inView, setInView] = useState(false)
   useEffect(() => {
@@ -412,7 +412,7 @@ function ViewportCanvas({ children, placeholder }: { children: ReactNode; placeh
   }, [])
   return (
     <div ref={ref} className="h-full w-full">
-      {inView ? children : placeholder}
+      {inView && !suspended ? children : placeholder}
     </div>
   )
 }
@@ -1265,7 +1265,7 @@ export default function CaseThread({
               {glbPreviews.map(p => (
                 <div key={p.id} className="overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
                   <div className="relative h-64 sm:h-72">
-                    <ViewportCanvas placeholder={<div className="flex h-full w-full items-center justify-center text-sm text-slate-400">3D preview · scroll to load</div>}>
+                    <ViewportCanvas suspended={!!(maximized || maximizedPreview)} placeholder={<div className="flex h-full w-full items-center justify-center text-sm text-slate-400">3D preview · scroll to load</div>}>
                     <ScanViewer
                       url={p.url}
                       gateTouch
@@ -1348,7 +1348,7 @@ export default function CaseThread({
                         ) : isModelFile(a.name) ? (
                           <div key={a.id} className="basis-full">
                             <div className="group relative h-64 sm:h-72 w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
-                              <ViewportCanvas placeholder={<div className="flex h-full w-full items-center justify-center text-sm text-slate-400">3D scan · scroll to load</div>}>
+                              <ViewportCanvas suspended={!!(maximized || maximizedPreview)} placeholder={<div className="flex h-full w-full items-center justify-center text-sm text-slate-400">3D scan · scroll to load</div>}>
                               <ScanViewer
                                 url={a.dataUrl}
                                 gateTouch
