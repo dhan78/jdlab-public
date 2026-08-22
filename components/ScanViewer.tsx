@@ -749,7 +749,7 @@ function setActiveViewer(id: string | null) {
 // compositing layer) so a mobile WebGL canvas can never paint over them.
 function OverlayLayer({ fullscreen, children }: { fullscreen: boolean; children: ReactNode }) {
   if (fullscreen && typeof document !== 'undefined') {
-    return createPortal(<div className="pointer-events-none fixed inset-0 z-[70]">{children}</div>, document.body)
+    return createPortal(<div className="pointer-events-none fixed inset-0 z-[70] touch-none">{children}</div>, document.body)
   }
   return <>{children}</>
 }
@@ -1107,7 +1107,7 @@ export default function ScanViewer({
          (OverlayLayer) so the mobile WebGL canvas can't composite over them. */}
       <OverlayLayer fullscreen={fullscreen}>
       {!error && (geometry || scene) && (
-        <div className={`absolute left-2 z-30 flex flex-wrap items-center gap-2 ${fullscreen ? 'pointer-events-auto top-[calc(env(safe-area-inset-top,0px)+3.25rem)]' : 'top-2'}`}>
+        <div className={`absolute left-2 z-30 flex touch-none flex-wrap items-center gap-2 ${fullscreen ? 'pointer-events-auto top-[calc(env(safe-area-inset-top,0px)+3.25rem)]' : 'top-2'}`}>
           {canAnnotate && (
             <button
               type="button"
@@ -1186,7 +1186,7 @@ export default function ScanViewer({
             setResetNonce(n => n + 1)
           }}
           title="Reset the camera to the default framing"
-          className={`absolute right-2 z-30 rounded-lg bg-black/40 px-2.5 py-1.5 text-xs text-white/80 backdrop-blur-sm transition hover:bg-black/60 ${fullscreen ? 'pointer-events-auto bottom-[max(0.5rem,env(safe-area-inset-bottom))]' : 'bottom-2'}`}
+          className={`absolute right-2 z-30 touch-none rounded-lg bg-black/40 px-2.5 py-1.5 text-xs text-white/80 backdrop-blur-sm transition hover:bg-black/60 ${fullscreen ? 'pointer-events-auto bottom-[max(0.5rem,env(safe-area-inset-bottom))]' : 'bottom-2'}`}
         >
           Reset view
         </button>

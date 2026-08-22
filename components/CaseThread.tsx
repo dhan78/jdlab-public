@@ -472,6 +472,20 @@ export default function CaseThread({
     return () => window.removeEventListener('keydown', onKey)
   }, [maximized, maximizedPreview])
 
+  // Lock page scroll while a viewer is maximized so a touch-drag can't pan the
+  // page / visual viewport underneath the full-screen overlay.
+  useEffect(() => {
+    if (!maximized && !maximizedPreview) return
+    const prevOverflow = document.body.style.overflow
+    const prevOverscroll = document.body.style.overscrollBehavior
+    document.body.style.overflow = 'hidden'
+    document.body.style.overscrollBehavior = 'none'
+    return () => {
+      document.body.style.overflow = prevOverflow
+      document.body.style.overscrollBehavior = prevOverscroll
+    }
+  }, [maximized, maximizedPreview])
+
   // Load 3D annotations for the case (visible to both doctor and lab). Refetched
   // after each create/delete keeps the numbered badges consistent.
   const loadAnnotations = useCallback(async () => {
@@ -1562,12 +1576,12 @@ export default function CaseThread({
               )}
             </div>
             {/* Chrome in a separate top compositing layer (z-70) so the WebGL canvas can't cover it on mobile */}
-            <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] flex items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+            <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] flex touch-none items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
               <button
                 type="button"
                 data-intent="viewer_close"
                 onClick={() => setMaximized(null)}
-                className="pointer-events-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-sm text-white shadow-lg transition hover:bg-white/25"
+                className="pointer-events-auto inline-flex shrink-0 touch-none items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-sm text-white shadow-lg transition hover:bg-white/25"
               >
                 <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
                 Close
@@ -1593,12 +1607,12 @@ export default function CaseThread({
               />
             </div>
             {/* Chrome in a separate top compositing layer (z-70) so the WebGL canvas can't cover it on mobile */}
-            <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] flex items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+            <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] flex touch-none items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
               <button
                 type="button"
                 data-intent="viewer_close"
                 onClick={() => setMaximizedPreview(null)}
-                className="pointer-events-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-sm text-white shadow-lg transition hover:bg-white/25"
+                className="pointer-events-auto inline-flex shrink-0 touch-none items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-sm text-white shadow-lg transition hover:bg-white/25"
               >
                 <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
                 Close
