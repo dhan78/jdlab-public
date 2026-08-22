@@ -479,7 +479,17 @@ export default function CaseThread({
       const res = await fetch(`/api/portal/cases/${caseId}/annotations`)
       if (res.ok) {
         const data = await res.json()
-        setAnnotations(Array.isArray(data.annotations) ? data.annotations : [])
+        const list: Annotation[] = Array.isArray(data.annotations) ? data.annotations : []
+        setAnnotations(list)
+        // Breadcrumb: on a "pins vanished" reopen, this says whether the DATA was
+        // present (count>0) or empty, and how the pins are anchored — so we can
+        // tell a data/fetch problem from a pure render problem.
+        track('annotations_loaded', {
+          caseId,
+          count: list.length,
+          withPreviewKey: list.filter(a => a.previewKey).length,
+          withAttachmentId: list.filter(a => a.attachmentId).length,
+        })
       } else {
         // Surface WHY pins vanished (401/429/5xx) instead of silently dropping them.
         reportClientError('annotations_load', caseId, `status ${res.status}`, { status: res.status })
@@ -490,6 +500,11 @@ export default function CaseThread({
   }, [caseId])
 
   useEffect(() => {
+    // Clear the previous case's pins IMMEDIATELY (before the async load), so
+    // stale annotations can't bleed onto a new case while its own load is in
+    // flight — cases can share the same GLB scan (same previewKey), which made
+    // that leak visible as pins appearing on cases that have none / vanishing.
+    setAnnotations([])
     void loadAnnotations()
   }, [loadAnnotations])
 
