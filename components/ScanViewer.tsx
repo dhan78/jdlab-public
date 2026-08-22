@@ -1084,9 +1084,11 @@ export default function ScanViewer({
         </button>
       )}
 
-      {/* Annotation + measure controls. */}
-      {!error && (geometry || scene) && !touchGateActive && (
-        <div className="absolute left-2 top-2 z-20 flex flex-wrap items-center gap-2">
+      {/* Annotation + measure controls. Shown regardless of the touch scroll-gate
+         (they're taps, not swipes) so they never vanish; lifted above the gate
+         scrim (z-30 > z-20). */}
+      {!error && (geometry || scene) && (
+        <div className="absolute left-2 top-2 z-30 flex flex-wrap items-center gap-2" style={{ transform: 'translateZ(0)' }}>
           {canAnnotate && (
             <button
               type="button"
@@ -1095,6 +1097,7 @@ export default function ScanViewer({
                 setSelectedId(null)
                 setDraft(null)
                 setMeasureMode(false)
+                setTouchActivated(true) // release the scroll gate so taps place a pin
                 setAddMode(m => !m)
               }}
               className={`rounded-lg px-2.5 py-1.5 text-xs font-medium shadow-sm backdrop-blur-sm transition ${
@@ -1126,6 +1129,7 @@ export default function ScanViewer({
               onClick={() => {
                 setAddMode(false)
                 setDraft(null)
+                setTouchActivated(true) // release the scroll gate so taps place points
                 setMeasureMode(m => !m)
               }}
               className={`rounded-lg px-2.5 py-1.5 text-xs font-medium shadow-sm backdrop-blur-sm transition ${
@@ -1154,7 +1158,7 @@ export default function ScanViewer({
       )}
 
       {/* Reset view — separate corner so it never crowds the pin/measure tools. */}
-      {!error && (geometry || scene) && viewKey && !touchGateActive && (
+      {!error && (geometry || scene) && viewKey && (
         <button
           type="button"
           data-intent="view_reset"
@@ -1163,7 +1167,8 @@ export default function ScanViewer({
             setResetNonce(n => n + 1)
           }}
           title="Reset the camera to the default framing"
-          className="absolute bottom-2 right-2 z-20 rounded-lg bg-black/40 px-2.5 py-1.5 text-xs text-white/80 backdrop-blur-sm transition hover:bg-black/60"
+          className="absolute bottom-2 right-2 z-30 rounded-lg bg-black/40 px-2.5 py-1.5 text-xs text-white/80 backdrop-blur-sm transition hover:bg-black/60"
+          style={{ transform: 'translateZ(0)' }}
         >
           Reset view
         </button>
