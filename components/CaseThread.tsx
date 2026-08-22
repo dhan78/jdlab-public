@@ -1538,9 +1538,8 @@ export default function CaseThread({
           </div>
         </form>
         {maximized && typeof document !== 'undefined' && createPortal(
-          <div className="fixed inset-0 z-[60] flex flex-col overflow-hidden touch-none overscroll-contain bg-slate-950/95 backdrop-blur-sm">
-            {/* translateZ(0): own GPU layer so the WebGL canvas can't paint over the controls on mobile */}
-            <div className="relative z-10 flex items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-slate-100" style={{ transform: 'translateZ(0)' }}>
+          <div className="fixed inset-0 z-[60] flex flex-col overflow-hidden touch-none overscroll-contain bg-slate-950">
+            <div className="relative z-10 flex items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-slate-100">
               <button
                 type="button"
                 data-intent="viewer_close"
@@ -1577,9 +1576,8 @@ export default function CaseThread({
           document.body
         )}
         {maximizedPreview && typeof document !== 'undefined' && createPortal(
-          <div className="fixed inset-0 z-[60] flex flex-col overflow-hidden touch-none overscroll-contain bg-slate-950/95 backdrop-blur-sm">
-            {/* translateZ(0): own GPU layer so the WebGL canvas can't paint over the controls on mobile */}
-            <div className="relative z-10 flex items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-slate-100" style={{ transform: 'translateZ(0)' }}>
+          <div className="fixed inset-0 z-[60] flex flex-col overflow-hidden touch-none overscroll-contain bg-slate-950">
+            <div className="relative z-10 flex items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-slate-100">
               <button
                 type="button"
                 data-intent="viewer_close"

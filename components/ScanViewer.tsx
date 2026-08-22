@@ -945,6 +945,9 @@ export default function ScanViewer({
 
   return (
     <div ref={rootRef} className={`relative ${className ?? ''} ${measureMode || addMode ? '[&_canvas]:!cursor-crosshair' : ''}`}>
+      {/* isolate: trap the WebGL canvas in its own stacking context so it can't
+         composite above the DOM controls on mobile (iOS/Android canvas layering bug) */}
+      <div className="absolute inset-0 z-0" style={{ isolation: 'isolate' }}>
       <Canvas
         frameloop="demand"
         dpr={[1, 2]}
@@ -1065,6 +1068,7 @@ export default function ScanViewer({
           signal={`${pins.length}:${addMode}:${draft ? 1 : 0}:${selectedId ?? ''}:${measureMode}:${pendingMeasure ? 1 : 0}:${pendingPoint ? 1 : 0}`}
         />
       </Canvas>
+      </div>
 
       {touchGateActive && (
         <button
