@@ -397,7 +397,7 @@ function Lightbox({
 // scrolled well away, so a case with many 3D previews never holds more than a
 // few live WebGL contexts at once. Browsers cap contexts (~8 on mobile); over
 // the cap the oldest is force-lost and its pins vanish — the bug this prevents.
-function ViewportCanvas({ children, placeholder, suspended = false }: { children: ReactNode; placeholder?: ReactNode; suspended?: boolean }) {
+function ViewportCanvas({ children, placeholder }: { children: ReactNode; placeholder?: ReactNode }) {
   const ref = useRef<HTMLDivElement | null>(null)
   const [inView, setInView] = useState(false)
   useEffect(() => {
@@ -412,7 +412,7 @@ function ViewportCanvas({ children, placeholder, suspended = false }: { children
   }, [])
   return (
     <div ref={ref} className="h-full w-full">
-      {inView && !suspended ? children : placeholder}
+      {inView ? children : placeholder}
     </div>
   )
 }
@@ -472,17 +472,25 @@ export default function CaseThread({
     return () => window.removeEventListener('keydown', onKey)
   }, [maximized, maximizedPreview])
 
-  // Lock page scroll while a viewer is maximized so a touch-drag can't pan the
-  // page / visual viewport underneath the full-screen overlay.
+  // While a viewer is maximized: lock page scroll (so a touch-drag can't pan the
+  // page underneath) and disable horizontal overscroll history-nav (swipe-left to
+  // the previous case). That nav gesture is governed by <html>, not <body>.
   useEffect(() => {
     if (!maximized && !maximizedPreview) return
-    const prevOverflow = document.body.style.overflow
-    const prevOverscroll = document.body.style.overscrollBehavior
-    document.body.style.overflow = 'hidden'
-    document.body.style.overscrollBehavior = 'none'
+    const body = document.body.style
+    const root = document.documentElement.style
+    const prev = {
+      bodyOverflow: body.overflow,
+      bodyOverscroll: body.overscrollBehavior,
+      rootOverscroll: root.overscrollBehavior,
+    }
+    body.overflow = 'hidden'
+    body.overscrollBehavior = 'none'
+    root.overscrollBehavior = 'none'
     return () => {
-      document.body.style.overflow = prevOverflow
-      document.body.style.overscrollBehavior = prevOverscroll
+      body.overflow = prev.bodyOverflow
+      body.overscrollBehavior = prev.bodyOverscroll
+      root.overscrollBehavior = prev.rootOverscroll
     }
   }, [maximized, maximizedPreview])
 
@@ -1279,7 +1287,7 @@ export default function CaseThread({
               {glbPreviews.map(p => (
                 <div key={p.id} className="overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
                   <div className="relative h-64 sm:h-72">
-                    <ViewportCanvas suspended={!!(maximized || maximizedPreview)} placeholder={<div className="flex h-full w-full items-center justify-center text-sm text-slate-400">3D preview · scroll to load</div>}>
+                    <ViewportCanvas placeholder={<div className="flex h-full w-full items-center justify-center text-sm text-slate-400">3D preview · scroll to load</div>}>
                     <ScanViewer
                       url={p.url}
                       gateTouch
@@ -1362,7 +1370,7 @@ export default function CaseThread({
                         ) : isModelFile(a.name) ? (
                           <div key={a.id} className="basis-full">
                             <div className="group relative h-64 sm:h-72 w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
-                              <ViewportCanvas suspended={!!(maximized || maximizedPreview)} placeholder={<div className="flex h-full w-full items-center justify-center text-sm text-slate-400">3D scan · scroll to load</div>}>
+                              <ViewportCanvas placeholder={<div className="flex h-full w-full items-center justify-center text-sm text-slate-400">3D scan · scroll to load</div>}>
                               <ScanViewer
                                 url={a.dataUrl}
                                 gateTouch
