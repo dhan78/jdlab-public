@@ -1066,7 +1066,7 @@ export default function CaseThread({
   }
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl overflow-x-clip">
         {editingDetails && caseDetail && (
           <CaseDetailsEditor
             caseToken={caseDetail.id}
@@ -1103,9 +1103,9 @@ export default function CaseThread({
           )}
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0">
-              <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex min-w-0 items-center gap-3 flex-wrap">
                 <span className="text-xs font-mono text-slate-400 tabular-nums">{caseDetail.caseNumber}</span>
-                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">{caseDetail.title}</h1>
+                <h1 className="min-w-0 break-words text-xl sm:text-2xl font-bold tracking-tight text-slate-900">{caseDetail.title}</h1>
                 <span className="text-xs font-medium text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">{CASE_TYPE_LABELS[caseDetail.caseType]}</span>
                 {caseDetail.material && (
                   <span className="text-xs text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">{caseDetail.material}</span>
