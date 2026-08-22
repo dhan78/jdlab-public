@@ -1606,7 +1606,7 @@ export default function CaseThread({
                 fullscreen
                 url={maximizedPreview.url}
                 className="h-full w-full"
-                viewKey={`${caseId}:glb:${maximizedPreview.id}:max`}
+                viewKey={`${caseId}:glb:${maximizedPreview.id}`}
                 annotations={annotations.filter(an => an.previewKey === maximizedPreview.id)}
                 onCreateAnnotation={p => createPreviewAnnotation(maximizedPreview.id, p)}
                 onDeleteAnnotation={deleteAnnotation}

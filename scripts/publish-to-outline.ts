@@ -44,7 +44,7 @@ const DEFAULT_TARGETS = [
   'app', 'components', 'lib', 'drizzle', 'scripts', 'tests', 'specs',
   'deploy', 'test-fixtures', 'lambda', 'ingestion',
   'middleware.ts', 'next.config.ts', 'tailwind.config.ts', 'postcss.config.js',
-  'drizzle.config.ts', 'tsconfig.json', 'package.json', 'eslint.config.mjs',
+  'drizzle.config.ts', 'vitest.config.ts', 'tsconfig.json', 'package.json', 'eslint.config.mjs',
   'docker-compose.yml', 'Dockerfile', 'Caddyfile', 'README.md', 'HANDOFF.md',
 ]
 

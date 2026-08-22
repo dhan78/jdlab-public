@@ -42,7 +42,11 @@ export default function CasesShell({ children }: { children: React.ReactNode }) 
   // Side-by-side resizing is a desktop-only affordance. Default to desktop for
   // SSR (this view is primarily used on larger screens); the effect corrects it
   // on mount for smaller viewports.
-  const [isDesktop, setIsDesktop] = useState(true)
+  // Side-by-side resizing is a desktop-only affordance. `null` until measured so
+  // SSR + first client paint render the same neutral skeleton (below); otherwise
+  // the SSR-desktop tree mounts the heavy detail pane, then the mobile effect
+  // remounts it in a different tree — double-fetching + re-parsing every scan.
+  const [isDesktop, setIsDesktop] = useState<boolean | null>(null)
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 1024px)')
     const sync = () => setIsDesktop(mq.matches)
@@ -67,6 +71,12 @@ export default function CasesShell({ children }: { children: React.ReactNode }) 
 
   // Imperative handle so a double-click on the divider snaps back to defaults.
   const groupRef = useRef<ImperativePanelGroupHandle>(null)
+
+  // Defer one tick until the viewport is known, so the detail pane mounts exactly
+  // once (in the correct layout) instead of desktop-then-mobile.
+  if (isDesktop === null) {
+    return <div className="h-[calc(100vh-5rem)]" aria-hidden />
+  }
 
   if (!isDesktop) {
     return <div className="min-w-0">{caseOpen ? children : <CaseList />}</div>
