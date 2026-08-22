@@ -10,8 +10,8 @@
  * to the converter via `resolveAsset`.
  *
  * Recursion guard: we only process keys under RAW_PREFIX and always write under
- * GLB_PREFIX, so the output never re-triggers the function. The S3 notification
- * filter should ALSO restrict by prefix/suffix (see aws/s3-notify.json).
+ * GLB_PREFIX, so the output never re-triggers the function. The EventBridge rule
+ * ALSO restricts by prefix (see aws/ingest-eventbridge-pattern.json).
  *
  * Env:
  *   GLB_BUCKET   destination bucket (default: the source bucket)
@@ -57,20 +57,47 @@ async function getObjectBytes(bucket, key) {
 
 // For an OBJ scan zipped with its .mtl + texture, return { objBuffer, objName,
 // resolveAsset } so the converter can pull companion files by name.
-function openObjZip(zipBuffer) {
-  const entries = unzipSync(new Uint8Array(zipBuffer)) // { path: Uint8Array }
-  // Case-insensitive lookup by basename (zips often nest under a folder).
+// A scan zip (exocad / lab case export) usually holds several meshes — upper &
+// lower arches plus the occlusion bite — each often in BOTH .ply and .stl. We
+// emit one GLB per mesh, preferring the .ply of a duplicate pair (PLY carries
+// the scanner's vertex color; STL is geometry-only). OBJ is supported too, with
+// its .mtl/texture companions resolved from the same zip.
+const ZIP_MESH_PRIORITY = { ply: 3, obj: 2, stl: 1 }
+
+function zipMeshes(zipBuffer) {
+  const entries = unzipSync(new Uint8Array(zipBuffer), { filter: f => !f.name.endsWith('/') })
+  // Case-insensitive basename map so an OBJ can resolve its .mtl/texture siblings.
   const byBase = new Map()
-  let objName = null
-  for (const path of Object.keys(entries)) {
-    if (path.endsWith('/')) continue
-    const base = basename(path).toLowerCase()
-    byBase.set(base, entries[path])
-    if (base.endsWith('.obj')) objName = basename(path)
-  }
-  if (!objName) throw new Error('zip contains no .obj file')
+  for (const path of Object.keys(entries)) byBase.set(basename(path).toLowerCase(), entries[path])
   const resolveAsset = async name => byBase.get(basename(name).toLowerCase()) ?? null
-  return { objBuffer: Buffer.from(byBase.get(objName.toLowerCase())), objName, resolveAsset }
+
+  // Keep the highest-priority format per mesh stem, so a PLY+STL pair of the
+  // same scan converts once (PLY wins).
+  const best = new Map()
+  for (const path of Object.keys(entries)) {
+    const base = basename(path)
+    const ext = extOf(base)
+    if (!ZIP_MESH_PRIORITY[ext]) continue // skip non-mesh files (and any nested .zip)
+    const stem = base.slice(0, base.length - ext.length - 1).toLowerCase()
+    const cur = best.get(stem)
+    if (!cur || ZIP_MESH_PRIORITY[ext] > cur.prio) best.set(stem, { path, ext, prio: ZIP_MESH_PRIORITY[ext], filename: base })
+  }
+  if (best.size === 0) throw new Error('zip contains no STL/PLY/OBJ mesh')
+  // Copy the winning buffers out so the (large) full-zip `entries` can be GC'd.
+  return [...best.values()].map(m => ({
+    filename: m.filename,
+    buffer: Buffer.from(entries[m.path]),
+    resolveAsset: m.ext === 'obj' ? resolveAsset : undefined,
+  }))
+}
+
+// Output key for a mesh extracted from a zip: GLB_PREFIX + <zip path minus .zip>
+// / <mesh name>.glb — so one case zip becomes a folder of per-mesh GLBs.
+function zipOutputKey(rawKey, filename) {
+  const rest = rawKey.startsWith(RAW_PREFIX) ? rawKey.slice(RAW_PREFIX.length) : basename(rawKey)
+  const dir = rest.replace(/\.[^./]+$/, '')
+  const stem = filename.replace(/\.[^.]+$/, '')
+  return `${GLB_PREFIX}${dir}/${stem}.glb`
 }
 
 async function processOne(bucket, rawKey) {
@@ -87,58 +114,75 @@ async function processOne(bucket, rawKey) {
   }
 
   const raw = await getObjectBytes(bucket, rawKey)
-
-  let inputBuffer = raw
-  let filename = basename(rawKey)
-  let resolveAsset
-
-  if (ext === 'zip') {
-    const opened = openObjZip(raw)
-    inputBuffer = opened.objBuffer
-    filename = opened.objName
-    resolveAsset = opened.resolveAsset
-  }
-
-  const { glb, stats } = await convertScan(inputBuffer, {
-    filename,
-    resolveAsset,
-    ...(TARGET_TRIS ? { targetTris: TARGET_TRIS } : {}),
-  })
-
   const outBucket = process.env.GLB_BUCKET || bucket
-  const outKey = outputKey(rawKey)
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: outBucket,
-      Key: outKey,
-      Body: glb,
-      ContentType: 'model/gltf-binary',
-      // Small, non-PHI stats for observability (S3 metadata values are strings).
-      Metadata: {
-        'source-key': rawKey.slice(0, 1024),
-        format: String(stats.format),
-        'input-tris': String(stats.inputTris),
-        'output-tris': String(stats.outputTris),
-        'output-bytes': String(stats.outputBytes),
-        shrink: String(stats.shrink),
-        'ms-total': String(stats.msTotal),
-      },
-    }),
-  )
 
-  console.log(
-    `converted ${rawKey} → ${outBucket}/${outKey} ` +
-      `(${stats.format}, ${stats.inputTris}→${stats.outputTris} tris, ` +
-      `${(stats.outputBytes / 1024).toFixed(0)}KB, ${stats.shrink}× smaller, ${stats.msTotal}ms)`,
-  )
+  // One job per output GLB: a zip fans out to one mesh each (upper/lower/
+  // occlusion); every other format is a single mesh.
+  const jobs =
+    ext === 'zip'
+      ? zipMeshes(raw).map(m => ({ ...m, outKey: zipOutputKey(rawKey, m.filename) }))
+      : [{ filename: basename(rawKey), buffer: raw, resolveAsset: undefined, outKey: outputKey(rawKey) }]
+
+  const failures = []
+  for (const job of jobs) {
+    try {
+      const { glb, stats } = await convertScan(job.buffer, {
+        filename: job.filename,
+        resolveAsset: job.resolveAsset,
+        ...(TARGET_TRIS ? { targetTris: TARGET_TRIS } : {}),
+      })
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: outBucket,
+          Key: job.outKey,
+          Body: glb,
+          ContentType: 'model/gltf-binary',
+          // Small, non-PHI stats for observability (S3 metadata values are strings).
+          Metadata: {
+            'source-key': rawKey.slice(0, 1024),
+            format: String(stats.format),
+            'input-tris': String(stats.inputTris),
+            'output-tris': String(stats.outputTris),
+            'output-bytes': String(stats.outputBytes),
+            shrink: String(stats.shrink),
+            'ms-total': String(stats.msTotal),
+          },
+        }),
+      )
+      console.log(
+        `converted ${rawKey} → ${outBucket}/${job.outKey} ` +
+          `(${stats.format}, ${stats.inputTris}→${stats.outputTris} tris, ` +
+          `${(stats.outputBytes / 1024).toFixed(0)}KB, ${stats.shrink}× smaller, ${stats.msTotal}ms)`,
+      )
+    } catch (err) {
+      // Convert as many meshes as possible; report which ones failed at the end.
+      console.error(`FAILED ${rawKey}#${job.filename}: ${err instanceof Error ? err.stack : err}`)
+      failures.push(`${job.filename}: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  if (failures.length) {
+    throw new Error(`${failures.length}/${jobs.length} mesh(es) failed for ${rawKey}: ${failures.join('; ')}`)
+  }
+}
+
+// Normalize the trigger into {bucket, rawKey} records. Supports the EventBridge
+// "Object Created" shape (detail.*, key NOT url-encoded) AND the classic S3
+// notification shape (Records[].s3, key url-encoded) — so the function works as
+// an EventBridge target OR a direct S3 trigger, and for manual invokes with
+// either payload.
+function eventRecords(event) {
+  if (event?.detail?.bucket) {
+    return [{ bucket: event.detail.bucket.name, rawKey: event.detail.object?.key ?? '' }]
+  }
+  return (event?.Records ?? []).map(r => ({
+    bucket: r.s3?.bucket?.name,
+    rawKey: decodeKey(r.s3?.object?.key ?? ''),
+  }))
 }
 
 export async function handler(event) {
-  const records = event?.Records ?? []
   const results = []
-  for (const r of records) {
-    const bucket = r.s3?.bucket?.name
-    const rawKey = decodeKey(r.s3?.object?.key ?? '')
+  for (const { bucket, rawKey } of eventRecords(event)) {
     if (!bucket || !rawKey) continue
     try {
       await processOne(bucket, rawKey)

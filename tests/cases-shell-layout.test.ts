@@ -63,3 +63,20 @@ describe('CasesShell desktop layout invariants (whitespace-after-footer regressi
     expect(relativePanels?.length ?? 0).toBeGreaterThanOrEqual(2)
   })
 })
+
+// Guards the mobile double-mount fix: `isDesktop` defaulted to `true`, so on a
+// phone the SSR/desktop tree mounted the heavy detail pane (CaseThread), then the
+// mount effect flipped to mobile and REMOUNTED it in a different tree — double
+// fetching annotations and re-parsing every scan on each case open. Fix: start
+// `null` (unmeasured) and render a neutral skeleton until the viewport is known,
+// so the detail pane mounts exactly once in the correct layout.
+describe('CasesShell mounts the detail pane once (mobile double-mount regression)', () => {
+  it('leaves isDesktop unmeasured (null) until the effect measures it — not a desktop default', () => {
+    expect(shellSource).toMatch(/useState<boolean \| null>\(null\)/)
+    expect(shellSource).not.toMatch(/const \[isDesktop, setIsDesktop\] = useState\(true\)/)
+  })
+
+  it('renders a neutral skeleton before the viewport is known (so children mount once)', () => {
+    expect(shellSource).toMatch(/if \(isDesktop === null\)/)
+  })
+})

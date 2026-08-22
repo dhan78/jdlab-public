@@ -1,6 +1,8 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { StatusIcon } from './StatusIcon'
 import {
@@ -8,6 +10,7 @@ import {
   STAGES_BY_TYPE,
   CASE_TYPE_LABELS,
   formatDoctorName,
+  caseNeedsDetails,
   type CaseStatus,
   type CaseType,
 } from '@/lib/case-meta'
@@ -17,6 +20,7 @@ import { track } from '@/lib/telemetry'
 import dynamic from 'next/dynamic'
 import HtmlViewer from './HtmlViewer'
 import SleepyPuppy from './SleepyPuppy'
+import CaseDetailsEditor from './CaseDetailsEditor'
 
 // The 3D scan viewer is heavy + WebGL-only, so load it lazily and client-side
 // only, and render it just for attachments that are actually models (.stl/.ply).
@@ -41,10 +45,11 @@ interface Attachment {
   dataUrl: string
 }
 
-// A 3D surface pin on a model attachment (visible to both doctor and lab).
+// A 3D surface pin on a model attachment or an auto-generated GLB preview.
 interface Annotation {
   id: string
-  attachmentId: string
+  attachmentId: string | null
+  previewKey?: string | null
   kind?: string // 'pin' | 'measure'
   x: number
   y: number
@@ -388,6 +393,30 @@ function Lightbox({
   )
 }
 
+// Mounts its (WebGL) child only while near the viewport and unmounts it once
+// scrolled well away, so a case with many 3D previews never holds more than a
+// few live WebGL contexts at once. Browsers cap contexts (~8 on mobile); over
+// the cap the oldest is force-lost and its pins vanish — the bug this prevents.
+function ViewportCanvas({ children, placeholder }: { children: ReactNode; placeholder?: ReactNode }) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [inView, setInView] = useState(false)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      setInView(true)
+      return
+    }
+    const io = new IntersectionObserver(([e]) => setInView(e.isIntersecting), { rootMargin: '300px 0px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+  return (
+    <div ref={ref} className="h-full w-full">
+      {inView ? children : placeholder}
+    </div>
+  )
+}
+
 export default function CaseThread({
   caseId,
   currentUserId,
@@ -404,6 +433,8 @@ export default function CaseThread({
   // A missing/forbidden case (404/403) is a calm, expected state — not an error.
   // Tracked separately so we render a neutral panel and DON'T log it.
   const [caseGone, setCaseGone] = useState(false)
+  const router = useRouter()
+  const [deleting, setDeleting] = useState(false)
 
   // Live clock so the SLA chip recomputes on its own as time passes.
   const [now, setNow] = useState(() => new Date())
@@ -419,21 +450,49 @@ export default function CaseThread({
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
   const [statusSaving, setStatusSaving] = useState(false)
+  const [editingDetails, setEditingDetails] = useState(false)
+  const [glbPreviews, setGlbPreviews] = useState<{ id: string; name: string; url: string; size: number }[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [dragActive, setDragActive] = useState(false)
   const [lightbox, setLightbox] = useState<{ items: Attachment[]; index: number } | null>(null)
   // Attachment currently expanded to a full-window viewer (STL/PLY or HTML).
   const [maximized, setMaximized] = useState<Attachment | null>(null)
+  // A GLB preview expanded to a full-window (annotatable) viewer.
+  const [maximizedPreview, setMaximizedPreview] = useState<{ id: string; name: string; url: string; size: number } | null>(null)
   // 3D surface pins for this case, grouped client-side by attachment id.
   const [annotations, setAnnotations] = useState<Annotation[]>([])
 
   // Close the full-window viewer on Escape.
   useEffect(() => {
-    if (!maximized) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMaximized(null) }
+    if (!maximized && !maximizedPreview) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setMaximized(null); setMaximizedPreview(null) }
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [maximized])
+  }, [maximized, maximizedPreview])
+
+  // While a viewer is maximized: lock page scroll (so a touch-drag can't pan the
+  // page underneath) and disable horizontal overscroll history-nav (swipe-left to
+  // the previous case). That nav gesture is governed by <html>, not <body>.
+  useEffect(() => {
+    if (!maximized && !maximizedPreview) return
+    const body = document.body.style
+    const root = document.documentElement.style
+    const prev = {
+      bodyOverflow: body.overflow,
+      bodyOverscroll: body.overscrollBehavior,
+      rootOverscroll: root.overscrollBehavior,
+    }
+    body.overflow = 'hidden'
+    body.overscrollBehavior = 'none'
+    root.overscrollBehavior = 'none'
+    return () => {
+      body.overflow = prev.bodyOverflow
+      body.overscrollBehavior = prev.bodyOverscroll
+      root.overscrollBehavior = prev.rootOverscroll
+    }
+  }, [maximized, maximizedPreview])
 
   // Load 3D annotations for the case (visible to both doctor and lab). Refetched
   // after each create/delete keeps the numbered badges consistent.
@@ -442,14 +501,32 @@ export default function CaseThread({
       const res = await fetch(`/api/portal/cases/${caseId}/annotations`)
       if (res.ok) {
         const data = await res.json()
-        setAnnotations(Array.isArray(data.annotations) ? data.annotations : [])
+        const list: Annotation[] = Array.isArray(data.annotations) ? data.annotations : []
+        setAnnotations(list)
+        // Breadcrumb: on a "pins vanished" reopen, this says whether the DATA was
+        // present (count>0) or empty, and how the pins are anchored — so we can
+        // tell a data/fetch problem from a pure render problem.
+        track('annotations_loaded', {
+          caseId,
+          count: list.length,
+          withPreviewKey: list.filter(a => a.previewKey).length,
+          withAttachmentId: list.filter(a => a.attachmentId).length,
+        })
+      } else {
+        // Surface WHY pins vanished (401/429/5xx) instead of silently dropping them.
+        reportClientError('annotations_load', caseId, `status ${res.status}`, { status: res.status })
       }
-    } catch {
-      /* non-fatal: the viewer still works without pins */
+    } catch (e) {
+      reportClientError('annotations_load', caseId, e instanceof Error ? e.message : 'annotations load failed')
     }
   }, [caseId])
 
   useEffect(() => {
+    // Clear the previous case's pins IMMEDIATELY (before the async load), so
+    // stale annotations can't bleed onto a new case while its own load is in
+    // flight — cases can share the same GLB scan (same previewKey), which made
+    // that leak visible as pins appearing on cases that have none / vanishing.
+    setAnnotations([])
     void loadAnnotations()
   }, [loadAnnotations])
 
@@ -472,6 +549,35 @@ export default function CaseThread({
           const data = await res.json()
           if (data.annotation) setAnnotations(prev => [...prev, data.annotation])
           // PHI-safe: kind + note LENGTH only, never the note text.
+          track('annotation_add', { caseId, kind: p.kind ?? 'pin', len: p.body.length })
+        } else {
+          reportClientError('annotation_create', caseId, `status ${res.status}`, { status: res.status })
+        }
+      } catch (e) {
+        reportClientError('annotation_create', caseId, e instanceof Error ? e.message : 'create failed')
+      }
+    },
+    [caseId]
+  )
+
+  // Create a pin on a GLB preview (anchored by its S3 key, not an attachment id).
+  const createPreviewAnnotation = useCallback(
+    async (
+      previewKey: string,
+      p: {
+        x: number; y: number; z: number; body: string
+        kind?: string; bx?: number; by?: number; bz?: number
+      }
+    ) => {
+      try {
+        const res = await fetch(`/api/portal/cases/${caseId}/annotations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ previewKey, ...p }),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          if (data.annotation) setAnnotations(prev => [...prev, data.annotation])
           track('annotation_add', { caseId, kind: p.kind ?? 'pin', len: p.body.length })
         } else {
           reportClientError('annotation_create', caseId, `status ${res.status}`, { status: res.status })
@@ -551,6 +657,7 @@ export default function CaseThread({
       setMessages(data.messages ?? [])
       setSlaConfig(data.slaConfig ?? {})
       setUnreadCount(data.unreadCount ?? 0)
+      setGlbPreviews(data.glbPreviews ?? [])
       // This GET recorded a case.view (audit); nudge the recently-viewed rail +
       // list to refresh so the just-opened case surfaces at the top. (Opening no
       // longer marks the case read, so this refresh had to be decoupled from it.)
@@ -580,6 +687,7 @@ export default function CaseThread({
       setMessages(data.messages ?? [])
       setSlaConfig(data.slaConfig ?? {})
       setUnreadCount(data.unreadCount ?? 0)
+      setGlbPreviews(data.glbPreviews ?? [])
     } catch {
       /* transient; the stream will prompt again on the next update */
     }
@@ -894,6 +1002,34 @@ export default function CaseThread({
     }
   }
 
+  // Admin-only hard delete: wipes the case + its entire history and storage,
+  // then leaves the view. Confirmed because it's irreversible.
+  const deleteCase = async () => {
+    if (currentUserRole !== 'admin') return
+    const label = caseDetail?.caseNumber ?? 'this case'
+    if (
+      !window.confirm(
+        `Permanently delete ${label}? This removes the case, its entire history, all attachments, and the scan files from storage. This cannot be undone.`
+      )
+    )
+      return
+    setDeleting(true)
+    try {
+      const res = await fetch(`/api/portal/cases/${caseId}`, { method: 'DELETE' })
+      if (res.ok) {
+        track('case_delete', { caseId })
+        window.dispatchEvent(new Event('cases:changed'))
+        router.push('/portal')
+        return // navigating away — keep the button disabled
+      }
+      const data = await res.json().catch(() => ({}))
+      reportClientError('case_delete', caseId, data.error ?? 'case delete failed', { status: res.status })
+    } catch (e) {
+      reportClientError('case_delete', caseId, e instanceof Error ? e.message : 'case delete failed', {})
+    }
+    setDeleting(false)
+  }
+
   if (loading) {
     return (
       <p className="text-gray-500">Loading case…</p>
@@ -938,7 +1074,25 @@ export default function CaseThread({
   }
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl overflow-x-clip">
+        {editingDetails && caseDetail && (
+          <CaseDetailsEditor
+            caseToken={caseDetail.id}
+            initial={{
+              title: caseDetail.title,
+              caseType: caseDetail.caseType,
+              patientName: caseDetail.patientName,
+              surgeryDate: caseDetail.surgeryDate,
+              toothRef: caseDetail.toothRef,
+              material: caseDetail.material,
+              scannerBrand: caseDetail.scannerBrand,
+              isRush: !!caseDetail.isRush,
+              specialInstructions: caseDetail.specialInstructions,
+            }}
+            onClose={() => setEditingDetails(false)}
+            onSaved={refreshCase}
+          />
+        )}
         <Link href="/portal" className="lg:hidden inline-flex items-center gap-1.5 text-slate-500 text-sm hover:text-primary transition-colors">
           <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M12 5l-5 5 5 5" strokeLinecap="round" strokeLinejoin="round" /></svg>
           Back to cases
@@ -946,11 +1100,20 @@ export default function CaseThread({
 
         {/* Case header */}
         <div className="mt-4 mb-6 bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+          {caseNeedsDetails(caseDetail) && (
+            <div className="mb-4 flex items-center justify-between gap-3 rounded-lg bg-amber-50 ring-1 ring-inset ring-amber-200 px-3 py-2">
+              <span className="inline-flex items-center gap-2 text-sm text-amber-900">
+                <svg className="w-4 h-4 flex-shrink-0 text-amber-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M10 3 2.5 16h15L10 3z" strokeLinejoin="round" /><path d="M10 8v3.5M10 13.7v.3" strokeLinecap="round" /></svg>
+                New case from an incoming scan — add the patient &amp; tooth details.
+              </span>
+              <button type="button" onClick={() => setEditingDetails(true)} data-intent="case_details_open" className="shrink-0 text-xs font-semibold text-amber-800 bg-white ring-1 ring-amber-300 rounded-md px-2.5 py-1 hover:bg-amber-100">Add details</button>
+            </div>
+          )}
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0">
-              <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex min-w-0 items-center gap-3 flex-wrap">
                 <span className="text-xs font-mono text-slate-400 tabular-nums">{caseDetail.caseNumber}</span>
-                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">{caseDetail.title}</h1>
+                <h1 className="min-w-0 break-words text-xl sm:text-2xl font-bold tracking-tight text-slate-900">{caseDetail.title}</h1>
                 <span className="text-xs font-medium text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">{CASE_TYPE_LABELS[caseDetail.caseType]}</span>
                 {caseDetail.material && (
                   <span className="text-xs text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">{caseDetail.material}</span>
@@ -1004,6 +1167,17 @@ export default function CaseThread({
               )}
             </div>
             <div className="flex items-center gap-2 sm:gap-3">
+              <button
+                type="button"
+                data-intent="case_details_open"
+                onClick={() => setEditingDetails(true)}
+                title="Edit case details"
+                aria-label="Edit case details"
+                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M4 13.5V16h2.5l7-7-2.5-2.5-7 7z" strokeLinejoin="round" /><path d="M11.5 6 14 8.5" strokeLinecap="round" /></svg>
+                <span className="hidden sm:inline">Edit</span>
+              </button>
               <button
                 type="button"
                 data-intent="case_pin_toggle"
@@ -1073,6 +1247,19 @@ export default function CaseThread({
                   {STATUS_META[caseDetail.status].label}
                 </span>
               )}
+              {currentUserRole === 'admin' && (
+                <button
+                  type="button"
+                  onClick={deleteCase}
+                  data-intent="case_delete"
+                  disabled={deleting}
+                  title="Permanently delete this case and all its files"
+                  className="inline-flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 transition disabled:opacity-60"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M4 6h12M8.5 6V4.5h3V6m-6 0 .6 9a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-9" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  {deleting ? 'Deleting…' : 'Delete'}
+                </button>
+              )}
               {/* Escalate-to-video hook (feature #3 — not wired yet) */}
               <button
                 type="button"
@@ -1087,6 +1274,53 @@ export default function CaseThread({
             </div>
           </div>
         </div>
+
+        {/* Auto-generated 3D previews (optimized GLBs from the incoming scan) */}
+        {glbPreviews.length > 0 && (
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-2">
+              <svg className="w-4 h-4 text-primary" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M10 2.5 3 6v8l7 3.5 7-3.5V6l-7-3.5z" strokeLinejoin="round" /><path d="M3 6l7 3.5L17 6M10 9.5v8" strokeLinejoin="round" /></svg>
+              <h2 className="text-sm font-semibold text-slate-700">3D preview{glbPreviews.length > 1 ? `s (${glbPreviews.length})` : ''}</h2>
+              <span className="text-xs text-slate-400">auto-generated · click the model to drop a pin</span>
+            </div>
+            <div className="grid grid-cols-1 gap-5">
+              {glbPreviews.map(p => (
+                <div key={p.id} className="overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
+                  <div className="relative h-64 sm:h-72">
+                    <ViewportCanvas placeholder={<div className="flex h-full w-full items-center justify-center text-sm text-slate-400">3D preview · scroll to load</div>}>
+                    <ScanViewer
+                      url={p.url}
+                      gateTouch
+                      className="h-full w-full"
+                      viewKey={`${caseId}:glb:${p.id}`}
+                      annotations={annotations.filter(an => an.previewKey === p.id)}
+                      onCreateAnnotation={pt => createPreviewAnnotation(p.id, pt)}
+                      onDeleteAnnotation={deleteAnnotation}
+                      onLoad={source => track('scan_view', { caseId, ext: 'glb', size: p.size, source })}
+                      onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: 'glb', size: p.size })}
+                    />
+                    </ViewportCanvas>
+                    <button
+                      type="button"
+                      data-intent="viewer_maximize"
+                      data-intent-meta="glb_preview"
+                      onClick={() => setMaximizedPreview(p)}
+                      title="Expand to full window"
+                      aria-label="Expand to full window"
+                      className="absolute right-2 top-2 rounded-lg bg-black/40 p-1.5 text-white/90 opacity-80 backdrop-blur-sm transition hover:bg-black/60 hover:opacity-100"
+                    >
+                      <IconMaximize />
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between bg-slate-800 px-3 py-1.5 text-xs text-slate-300">
+                    <span className="truncate">{displayName(p.name)}</span>
+                    <span className="text-slate-400">{formatSize(p.size)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Thread */}
         <div className="space-y-5 mb-6">
@@ -1135,9 +1369,11 @@ export default function CaseThread({
                           </button>
                         ) : isModelFile(a.name) ? (
                           <div key={a.id} className="basis-full">
-                            <div className="group relative h-72 w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
+                            <div className="group relative h-64 sm:h-72 w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
+                              <ViewportCanvas placeholder={<div className="flex h-full w-full items-center justify-center text-sm text-slate-400">3D scan · scroll to load</div>}>
                               <ScanViewer
                                 url={a.dataUrl}
+                                gateTouch
                                 className="h-full w-full"
                                 viewKey={`${caseId}:${a.id}`}
                                 annotations={annotations.filter(an => an.attachmentId === a.id)}
@@ -1146,6 +1382,7 @@ export default function CaseThread({
                                 onLoad={source => track('scan_view', { caseId, ext: a.name.split('.').pop()?.toLowerCase(), size: a.size, source })}
                                 onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: a.name.split('.').pop()?.toLowerCase(), size: a.size })}
                               />
+                              </ViewportCanvas>
                               <button
                                 type="button"
                                 data-intent="viewer_maximize"
@@ -1153,7 +1390,7 @@ export default function CaseThread({
                                 onClick={() => setMaximized(a)}
                                 title="Expand to full window"
                                 aria-label="Expand to full window"
-                                className="absolute right-2 top-2 rounded-lg bg-black/40 p-1.5 text-white/90 opacity-0 backdrop-blur-sm transition hover:bg-black/60 focus:opacity-100 group-hover:opacity-100"
+                                className="absolute right-2 top-2 rounded-lg bg-black/40 p-1.5 text-white/90 opacity-80 backdrop-blur-sm transition hover:bg-black/60 hover:opacity-100"
                               >
                                 <IconMaximize />
                               </button>
@@ -1184,7 +1421,7 @@ export default function CaseThread({
                                 onClick={() => setMaximized(a)}
                                 title="Expand to full window"
                                 aria-label="Expand to full window"
-                                className="absolute right-2 top-2 rounded-lg bg-slate-900/50 p-1.5 text-white opacity-0 backdrop-blur-sm transition hover:bg-slate-900/70 focus:opacity-100 group-hover:opacity-100"
+                                className="absolute right-2 top-2 rounded-lg bg-slate-900/50 p-1.5 text-white opacity-80 backdrop-blur-sm transition hover:bg-slate-900/70 hover:opacity-100"
                               >
                                 <IconMaximize />
                               </button>
@@ -1322,23 +1559,12 @@ export default function CaseThread({
             </button>
           </div>
         </form>
-        {maximized && (
-          <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-sm">
-            <div className="flex items-center justify-between gap-4 px-4 py-3 text-slate-100">
-              <span className="truncate text-sm font-medium">{maximized.name}</span>
-              <button
-                type="button"
-                data-intent="viewer_close"
-                onClick={() => setMaximized(null)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm text-white transition hover:bg-white/20"
-              >
-                Close
-                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
-              </button>
-            </div>
-            <div className="min-h-0 flex-1">
+        {maximized && typeof document !== 'undefined' && createPortal(
+          <>
+            <div className="fixed inset-0 z-[60] overflow-hidden touch-none overscroll-contain bg-slate-950">
               {isModelFile(maximized.name) ? (
                 <ScanViewer
+                  fullscreen
                   url={maximized.dataUrl}
                   className="h-full w-full"
                   viewKey={`${caseId}:${maximized.id}`}
@@ -1357,7 +1583,52 @@ export default function CaseThread({
                 />
               )}
             </div>
-          </div>
+            {/* Chrome in a separate top compositing layer (z-70) so the WebGL canvas can't cover it on mobile */}
+            <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] flex touch-none items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+              <button
+                type="button"
+                data-intent="viewer_close"
+                onClick={() => setMaximized(null)}
+                className="pointer-events-auto inline-flex shrink-0 touch-none items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-sm text-white shadow-lg transition hover:bg-white/25"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
+                Close
+              </button>
+              <span className="pointer-events-none min-w-0 flex-1 truncate text-sm font-medium text-slate-100 drop-shadow">{maximized.name}</span>
+            </div>
+          </>,
+          document.body
+        )}
+        {maximizedPreview && typeof document !== 'undefined' && createPortal(
+          <>
+            <div className="fixed inset-0 z-[60] overflow-hidden touch-none overscroll-contain bg-slate-950">
+              <ScanViewer
+                fullscreen
+                url={maximizedPreview.url}
+                className="h-full w-full"
+                viewKey={`${caseId}:glb:${maximizedPreview.id}`}
+                annotations={annotations.filter(an => an.previewKey === maximizedPreview.id)}
+                onCreateAnnotation={p => createPreviewAnnotation(maximizedPreview.id, p)}
+                onDeleteAnnotation={deleteAnnotation}
+                onLoad={source => track('scan_view', { caseId, ext: 'glb', size: maximizedPreview.size, maximized: true, source })}
+                onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: 'glb', size: maximizedPreview.size, maximized: true })}
+              />
+            </div>
+            {/* Chrome in a separate top compositing layer (z-70) so the WebGL canvas can't cover it on mobile */}
+            <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] flex touch-none items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+              <button
+                type="button"
+                data-intent="viewer_close"
+                onClick={() => setMaximizedPreview(null)}
+                className="pointer-events-auto inline-flex shrink-0 touch-none items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-sm text-white shadow-lg transition hover:bg-white/25"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
+                Close
+              </button>
+              <span className="pointer-events-none min-w-0 flex-1 truncate text-sm font-medium text-slate-100 drop-shadow">{displayName(maximizedPreview.name)}</span>
+            </div>
+          </>,
+          document.body
         )}
         {lightbox && (
           <Lightbox

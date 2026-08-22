@@ -15,7 +15,8 @@
  * Import this ONLY via `next/dynamic` with `{ ssr: false }` — it needs WebGL and
  * must not run during server rendering. See app/scans/viewer/page.tsx.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls, Html, Bounds, useBounds, Line } from '@react-three/drei'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
@@ -23,7 +24,7 @@ import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
-import { NeutralToneMapping, Vector3 } from 'three'
+import { NeutralToneMapping, Vector3, type WebGLRenderer } from 'three'
 import type { BufferGeometry, Group } from 'three'
 import { scanCacheKey, getScanBytes, putScanBytes } from '@/lib/scan-cache'
 import { loadScanView, saveScanView, clearScanView } from '@/lib/scan-view-state'
@@ -73,6 +74,14 @@ interface ScanViewerProps {
    *  authoring controls (used by the public /demo surface). Belt-and-suspenders
    *  on top of simply not passing the create/delete callbacks. */
   readOnly?: boolean
+  /** On coarse-pointer (touch) devices, overlay a "tap to interact" scrim so a
+   *  vertical swipe scrolls the PAGE instead of orbiting the model. For inline
+   *  viewers; leave off for the maximized/fullscreen view. */
+  gateTouch?: boolean
+  /** Render the annotation controls in a separate document.body portal layer so
+   *  a mobile WebGL canvas (its own GPU layer) can't composite over them. Use
+   *  for the maximized / fullscreen view. */
+  fullscreen?: boolean
   /** Stable per-scan id. When set, the camera pan/zoom/orbit is remembered for
    *  this scan (localStorage) and restored on return — across navigation AND
    *  page reloads — instead of resetting to the framed default. */
@@ -484,8 +493,9 @@ function GlbScene({
       {/* Restore this scan's saved view if present, else frame ONCE per scene
           (never on every render, so toggling measure / placing a pin doesn't
           reset the user's orbit/pan/zoom). Geometry is NOT rescaled, so world
-          hit points stay in real millimetres. */}
-      <Bounds clip margin={1.2}>
+          hit points stay in real millimetres. maxDuration={0} snaps the fit
+          instantly — no camera fly-in animation on load. */}
+      <Bounds clip margin={1.2} maxDuration={0}>
         <RestoreOrFit scene={scene} viewKey={viewKey} resetNonce={resetNonce} />
         <primitive
           object={scene}
@@ -725,6 +735,25 @@ function Overlay({ children, tone }: { children: React.ReactNode; tone?: 'error'
   )
 }
 
+// Coordinates the single "live" touch-activated inline viewer across all
+// instances on the page: activating one re-arms every other (only one canvas
+// ever captures swipes at a time). Module-level so viewers need no shared parent.
+let activeViewerId: string | null = null
+const viewerListeners = new Set<(id: string | null) => void>()
+function setActiveViewer(id: string | null) {
+  activeViewerId = id
+  viewerListeners.forEach(fn => fn(id))
+}
+
+// Fullscreen controls render in a separate document.body portal (its own top
+// compositing layer) so a mobile WebGL canvas can never paint over them.
+function OverlayLayer({ fullscreen, children }: { fullscreen: boolean; children: ReactNode }) {
+  if (fullscreen && typeof document !== 'undefined') {
+    return createPortal(<div className="pointer-events-none fixed inset-0 z-[70] touch-none">{children}</div>, document.body)
+  }
+  return <>{children}</>
+}
+
 export default function ScanViewer({
   url,
   file,
@@ -735,6 +764,8 @@ export default function ScanViewer({
   onCreateAnnotation,
   onDeleteAnnotation,
   readOnly = false,
+  gateTouch = false,
+  fullscreen = false,
   viewKey,
 }: ScanViewerProps) {
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null)
@@ -753,6 +784,62 @@ export default function ScanViewer({
   const [pendingMeasure, setPendingMeasure] = useState<{ a: Vector3; b: Vector3 } | null>(null)
   // Bumped by "Reset view" to force a re-frame (and clear the saved camera).
   const [resetNonce, setResetNonce] = useState(0)
+  // Touch scroll gate: on coarse pointers an inline 3D canvas traps vertical
+  // page scrolling, so overlay a "tap to interact" scrim until the user opts in.
+  const [coarsePointer, setCoarsePointer] = useState(false)
+  const [touchActivated, setTouchActivated] = useState(false)
+  const viewerId = useId()
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const glRef = useRef<WebGLRenderer | null>(null)
+  // Set right before we deliberately drop the context on unmount, so the
+  // context-lost handler doesn't report our own teardown as an error.
+  const intentionalLossRef = useRef(false)
+  // Release the WebGL context promptly on unmount so paging through many cases
+  // can't pile up live contexts past the browser cap (~16), which otherwise
+  // makes the browser drop the oldest canvas (model lingers, pins vanish).
+  useEffect(() => () => {
+    intentionalLossRef.current = true
+    try { glRef.current?.forceContextLoss() } catch { /* already disposed */ }
+    glRef.current = null
+  }, [])
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mq = window.matchMedia('(pointer: coarse)')
+    const update = () => setCoarsePointer(mq.matches)
+    update()
+    mq.addEventListener?.('change', update)
+    return () => mq.removeEventListener?.('change', update)
+  }, [])
+  // Activating this viewer re-arms every other one, so only one captures swipes.
+  useEffect(() => {
+    const onActiveChange = (id: string | null) => {
+      if (id !== viewerId) setTouchActivated(false)
+    }
+    viewerListeners.add(onActiveChange)
+    return () => {
+      viewerListeners.delete(onActiveChange)
+      if (activeViewerId === viewerId) setActiveViewer(null)
+    }
+  }, [viewerId])
+  // Re-arm the gate when the viewer scrolls out of view, so returning to it
+  // needs an explicit tap again and page scroll is never left trapped.
+  useEffect(() => {
+    if (!gateTouch || !coarsePointer) return
+    const el = rootRef.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) {
+          setTouchActivated(false)
+          if (activeViewerId === viewerId) setActiveViewer(null)
+        }
+      },
+      { threshold: 0.1 },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [gateTouch, coarsePointer, viewerId])
+  const touchGateActive = gateTouch && coarsePointer && !touchActivated
   const pins = annotations ?? []
   // Any authoring (pins AND the measure tool, which persists via onCreateAnnotation)
   // requires a create callback and a non-read-only viewer.
@@ -872,8 +959,30 @@ export default function ScanViewer({
   }, [url, file])
 
   return (
-    <div className={`relative ${className ?? ''} ${measureMode || addMode ? '[&_canvas]:!cursor-crosshair' : ''}`}>
-      <Canvas frameloop="demand" dpr={[1, 2]} camera={{ position: [0, 0, 3], fov: 45 }}>
+    <div ref={rootRef} className={`relative ${className ?? ''} ${measureMode || addMode ? '[&_canvas]:!cursor-crosshair' : ''}`}>
+      {/* isolate: trap the WebGL canvas in its own stacking context so it can't
+         composite above the DOM controls on mobile (iOS/Android canvas layering bug) */}
+      <div className="absolute inset-0 z-0" style={{ isolation: 'isolate' }}>
+      <Canvas
+        frameloop="demand"
+        dpr={[1, 2]}
+        camera={{ position: [0, 0, 3], fov: 45 }}
+        onCreated={({ gl, invalidate }) => {
+          glRef.current = gl
+          const canvas = gl.domElement
+          // A lost context freezes the demand render loop: the model's last frame
+          // stays but the Html pins stop repositioning and disappear. preventDefault
+          // lets the browser RESTORE the context; invalidate() re-renders so the
+          // pins come back. Report the loss so it's visible in telemetry.
+          canvas.addEventListener('webglcontextlost', e => {
+            e.preventDefault()
+            // Only a browser-initiated loss (hitting the context cap) is a real
+            // problem; our own forceContextLoss on unmount sets intentionalLossRef.
+            if (!intentionalLossRef.current) onErrorRef.current?.('webgl_context_lost')
+          })
+          canvas.addEventListener('webglcontextrestored', () => invalidate())
+        }}
+      >
         <color attach="background" args={['#0e1626']} />
         <ambientLight intensity={0.65} />
         <directionalLight position={[4, 5, 6]} intensity={0.9} />
@@ -974,10 +1083,31 @@ export default function ScanViewer({
           signal={`${pins.length}:${addMode}:${draft ? 1 : 0}:${selectedId ?? ''}:${measureMode}:${pendingMeasure ? 1 : 0}:${pendingPoint ? 1 : 0}`}
         />
       </Canvas>
+      </div>
 
-      {/* Annotation + measure controls. */}
+      {touchGateActive && (
+        <button
+          type="button"
+          data-intent="viewer_touch_activate"
+          onClick={() => {
+            setTouchActivated(true)
+            setActiveViewer(viewerId)
+          }}
+          style={{ touchAction: 'pan-y' }}
+          aria-label="Tap to interact with the 3D model"
+          className="absolute inset-0 z-20 flex items-end justify-center pb-3"
+        >
+          <span className="pointer-events-none rounded-full bg-black/55 px-3 py-1 text-xs font-medium text-white/90 backdrop-blur-sm">
+            Tap to interact · swipe to scroll
+          </span>
+        </button>
+      )}
+
+      {/* Controls. When fullscreen they render in a SEPARATE document.body portal
+         (OverlayLayer) so the mobile WebGL canvas can't composite over them. */}
+      <OverlayLayer fullscreen={fullscreen}>
       {!error && (geometry || scene) && (
-        <div className="absolute left-2 top-2 flex items-center gap-2">
+        <div className={`absolute left-2 z-30 flex touch-none flex-wrap items-center gap-2 ${fullscreen ? 'pointer-events-auto top-[calc(env(safe-area-inset-top,0px)+3.25rem)]' : 'top-2'}`}>
           {canAnnotate && (
             <button
               type="button"
@@ -986,6 +1116,7 @@ export default function ScanViewer({
                 setSelectedId(null)
                 setDraft(null)
                 setMeasureMode(false)
+                setTouchActivated(true) // release the scroll gate so taps place a pin
                 setAddMode(m => !m)
               }}
               className={`rounded-lg px-2.5 py-1.5 text-xs font-medium shadow-sm backdrop-blur-sm transition ${
@@ -1017,6 +1148,7 @@ export default function ScanViewer({
               onClick={() => {
                 setAddMode(false)
                 setDraft(null)
+                setTouchActivated(true) // release the scroll gate so taps place points
                 setMeasureMode(m => !m)
               }}
               className={`rounded-lg px-2.5 py-1.5 text-xs font-medium shadow-sm backdrop-blur-sm transition ${
@@ -1054,11 +1186,12 @@ export default function ScanViewer({
             setResetNonce(n => n + 1)
           }}
           title="Reset the camera to the default framing"
-          className="absolute bottom-2 right-2 rounded-lg bg-black/40 px-2.5 py-1.5 text-xs text-white/80 backdrop-blur-sm transition hover:bg-black/60"
+          className={`absolute right-2 z-30 touch-none rounded-lg bg-black/40 px-2.5 py-1.5 text-xs text-white/80 backdrop-blur-sm transition hover:bg-black/60 ${fullscreen ? 'pointer-events-auto bottom-[max(0.5rem,env(safe-area-inset-bottom))]' : 'bottom-2'}`}
         >
           Reset view
         </button>
       )}
+      </OverlayLayer>
 
       {loading && <Overlay>Loading scan…</Overlay>}
       {error && <Overlay tone="error">{error}</Overlay>}

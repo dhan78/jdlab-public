@@ -100,7 +100,9 @@ aws iam put-role-policy --role-name "$APP_ROLE" --policy-name attachment-s3 --po
 ```
 
 > Presigning is a local crypto op (no S3 call), but `HeadObject` (upload verification) and the
-> presigned **GET** on read both require these permissions on the role.
+> presigned **GET** on read both require these permissions on the role. `DeleteObject` +
+> `ListBucket` here also power the **admin case purge**, which wipes
+> `case-attachments/cases/<id>/` when a case is deleted.
 
 ---
 
@@ -140,3 +142,47 @@ composer uploads directly. Without it (local dev), the composer falls back to in
   rejects any `s3Key` not under the case's own prefix.
 - **exocad exports must be single self-contained HTML** (geometry embedded). A multi-file bundle
   won't work — only the one `.html` is uploaded, so relative sub-resource links would 404.
+
+---
+
+## 6. Optimized scan previews (GLB) — reading the scan bucket
+
+The S3 conversion Lambda writes decimated GLBs to a **separate** bucket
+(`jdlab-scans-prod-use1`) under `scans/glb/`. The portal resolves + presigns them
+at **view time** (`resolveGlbPreviews` in `lib/storage.ts`) and the case thread
+shows them inline. This needs config + its own read grant:
+
+```bash
+SCAN_BUCKET=jdlab-scans-prod-use1
+AWS_REGION=us-east-1
+# optional overrides (must match the Lambda's prefixes):
+# SCAN_RAW_PREFIX=scans/raw/
+# SCAN_GLB_PREFIX=scans/glb/
+```
+
+The portal's IAM role (EC2 instance role) needs **list + read** on the scan
+bucket's GLB output, plus **delete** on the raw + glb prefixes so the admin case
+purge can remove a case's source scan and previews — a *different* principal from
+the Lambda's role:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Sid": "ListGlb", "Effect": "Allow", "Action": ["s3:ListBucket"],
+      "Resource": "arn:aws:s3:::jdlab-scans-prod-use1",
+      "Condition": { "StringLike": { "s3:prefix": ["scans/glb/*"] } } },
+    { "Sid": "ReadGlb", "Effect": "Allow", "Action": ["s3:GetObject"],
+      "Resource": "arn:aws:s3:::jdlab-scans-prod-use1/scans/glb/*" },
+    { "Sid": "PurgeScanArtifacts", "Effect": "Allow", "Action": ["s3:DeleteObject"],
+      "Resource": [
+        "arn:aws:s3:::jdlab-scans-prod-use1/scans/raw/*",
+        "arn:aws:s3:::jdlab-scans-prod-use1/scans/glb/*"
+      ] }
+  ]
+}
+```
+
+Without `SCAN_BUCKET` set, `resolveGlbPreviews()` returns `[]` and the preview
+panel simply doesn't render (local dev / no-S3 degrades cleanly). Previews only
+resolve for **S3-ingested** cases (whose `scanCaseId` is `s3:<key>:<etag>`).

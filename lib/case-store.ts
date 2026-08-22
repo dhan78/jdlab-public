@@ -2,7 +2,7 @@ import { db } from './db'
 import { cases, caseMessages, messageAttachments, caseStatusHistory, users, caseReads, auditLog, caseAnnotations } from './db/schema'
 import { and, asc, desc, eq, gt, inArray, isNull, isNotNull, or, sql } from 'drizzle-orm'
 import { encodeCaseId, decodeCaseId } from './case-code'
-import { isS3Enabled, putAttachment, getAttachmentUrl, parseDataUrl } from './storage'
+import { isS3Enabled, putAttachment, getAttachmentUrl, parseDataUrl, deleteCaseAttachments, deleteScanArtifacts } from './storage'
 import type { CaseStatus, CaseType } from './case-meta'
 
 // Re-export the shared metadata so existing imports from '@/lib/case-store' keep working.
@@ -148,6 +148,43 @@ export async function addCase(input: {
   })
 
   return mapCase(row, input.doctorName)
+}
+
+// Fill in / edit the doctor-editable detail fields (used when the doctor
+// completes an auto-ingested case that arrived with only a scan). Only keys
+// present in `fields` are changed; a field set to null clears it. Status and
+// scan-receipt live on their own update paths.
+export async function updateCaseDetails(
+  id: string,
+  fields: {
+    title?: string
+    patientName?: string | null
+    surgeryDate?: string | null
+    toothRef?: string | null
+    material?: string | null
+    scannerBrand?: string | null
+    specialInstructions?: string | null
+    shipToAddress?: string | null
+    caseType?: CaseType
+    isRush?: boolean
+  }
+): Promise<Case | undefined> {
+  const set: Partial<typeof cases.$inferInsert> = { updatedAt: new Date() }
+  if (fields.title !== undefined) set.title = fields.title
+  if (fields.patientName !== undefined) set.patientName = fields.patientName
+  if (fields.surgeryDate !== undefined) set.surgeryDate = fields.surgeryDate
+  if (fields.toothRef !== undefined) set.toothRef = fields.toothRef
+  if (fields.material !== undefined) set.material = fields.material
+  if (fields.scannerBrand !== undefined) set.scannerBrand = fields.scannerBrand
+  if (fields.specialInstructions !== undefined) set.specialInstructions = fields.specialInstructions
+  if (fields.shipToAddress !== undefined) set.shipToAddress = fields.shipToAddress
+  if (fields.caseType !== undefined) set.caseType = fields.caseType
+  if (fields.isRush !== undefined) set.isRush = fields.isRush
+
+  const [row] = await db.update(cases).set(set).where(eq(cases.id, decodeCaseId(id))).returning()
+  if (!row) return undefined
+  const [d] = await db.select({ name: users.name }).from(users).where(eq(users.id, row.doctorId)).limit(1)
+  return mapCase(row, d?.name ?? '')
 }
 
 export async function findCaseById(id: string): Promise<Case | undefined> {
@@ -486,11 +523,37 @@ export async function isCasePinned(userId: string, caseId: string): Promise<bool
   return !!row?.pinnedAt
 }
 
+// Delete a case and its cascading children. Used to roll back an ingest that
+// created the case but then failed to copy/attach its scan, so a retry stays clean.
+export async function deleteCase(caseId: string): Promise<void> {
+  const cid = decodeCaseId(caseId)
+  if (cid < 0) return
+  await db.delete(cases).where(eq(cases.id, cid))
+}
+
+// Admin hard-delete: wipe the case, its thread + status history (DB cascade),
+// ALL S3 attachments, and the source raw scan + GLB previews — so no storage is
+// left anywhere in AWS. S3 is cleared first (idempotent) so a failure leaves the
+// DB row intact for a retry. Returns null if the case doesn't exist.
+export async function purgeCase(
+  caseId: string
+): Promise<{ attachmentsDeleted: number; scanObjectsDeleted: number } | null> {
+  const cid = decodeCaseId(caseId)
+  if (cid < 0) return null
+  const [row] = await db.select().from(cases).where(eq(cases.id, cid)).limit(1)
+  if (!row) return null
+  const attachmentsDeleted = isS3Enabled() ? await deleteCaseAttachments(caseId) : 0
+  const scanObjectsDeleted = await deleteScanArtifacts(row.scanCaseId)
+  await db.delete(cases).where(eq(cases.id, cid))
+  return { attachmentsDeleted, scanObjectsDeleted }
+}
+
 // --- 3D surface annotations (pins on a specific model attachment) ---
 
 export interface CaseAnnotation {
   id: string
-  attachmentId: string
+  attachmentId: string | null
+  previewKey: string | null
   kind: string // 'pin' | 'measure'
   x: number
   y: number
@@ -508,7 +571,8 @@ export interface CaseAnnotation {
 function mapAnnotation(r: typeof caseAnnotations.$inferSelect): CaseAnnotation {
   return {
     id: String(r.id),
-    attachmentId: String(r.attachmentId),
+    attachmentId: r.attachmentId != null ? String(r.attachmentId) : null,
+    previewKey: r.previewKey ?? null,
     kind: r.kind,
     x: r.x,
     y: r.y,
@@ -537,13 +601,15 @@ export async function listCaseAnnotations(caseId: string): Promise<CaseAnnotatio
   return rows.map(mapAnnotation)
 }
 
-// Create a pin. Verifies the attachment actually belongs to this case
-// (defense-in-depth: the id is enumerable). Returns null if the attachment
-// isn't part of the case.
+// Create a pin/measurement. It anchors to EITHER a model attachment (verified to
+// belong to this case) OR a GLB preview key (the caller validates it belongs to
+// the case, since previews are resolved from S3, not stored rows). Returns null
+// if an attachment anchor doesn't belong to the case.
 export async function createCaseAnnotation(
   caseId: string,
   input: {
-    attachmentId: string
+    attachmentId?: string
+    previewKey?: string
     kind?: string
     x: number
     y: number
@@ -558,21 +624,29 @@ export async function createCaseAnnotation(
   }
 ): Promise<CaseAnnotation | null> {
   const cid = decodeCaseId(caseId)
-  const aid = toIntId(input.attachmentId)
-  if (cid < 0 || aid < 0) return null
-  const [owner] = await db
-    .select({ id: messageAttachments.id })
-    .from(messageAttachments)
-    .innerJoin(caseMessages, eq(messageAttachments.messageId, caseMessages.id))
-    .where(and(eq(messageAttachments.id, aid), eq(caseMessages.caseId, cid)))
-    .limit(1)
-  if (!owner) return null
+  if (cid < 0) return null
+  let aid: number | null = null
+  let previewKey: string | null = null
+  if (input.previewKey) {
+    previewKey = input.previewKey.slice(0, 512)
+  } else {
+    aid = toIntId(input.attachmentId ?? '')
+    if (aid < 0) return null
+    const [owner] = await db
+      .select({ id: messageAttachments.id })
+      .from(messageAttachments)
+      .innerJoin(caseMessages, eq(messageAttachments.messageId, caseMessages.id))
+      .where(and(eq(messageAttachments.id, aid), eq(caseMessages.caseId, cid)))
+      .limit(1)
+    if (!owner) return null
+  }
   const uid = input.authorId != null ? toIntId(input.authorId) : -1
   const [row] = await db
     .insert(caseAnnotations)
     .values({
       caseId: cid,
       attachmentId: aid,
+      previewKey,
       kind: input.kind === 'measure' ? 'measure' : 'pin',
       x: input.x,
       y: input.y,
@@ -652,7 +726,9 @@ export async function addMessage(input: {
         if (isS3Enabled() && a.dataUrl) {
           const parsed = parseDataUrl(a.dataUrl)
           if (parsed) {
-            const key = await putAttachment(parsed.bytes, parsed.mimeType || a.mimeType, a.name)
+            const key = await putAttachment(parsed.bytes, parsed.mimeType || a.mimeType, a.name, {
+              caseId: input.caseId,
+            })
             return { ...base, storageKey: key, dataUrl: null }
           }
         }

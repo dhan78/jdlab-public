@@ -46,6 +46,27 @@ export default function NotificationBell() {
   const [pushState, setPushState] = useState<'unsupported' | 'off' | 'on' | 'busy'>('off')
   const [pushMsg, setPushMsg] = useState('')
   const refetchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  // Close on outside click / Escape. We can't rely on a `fixed inset-0`
+  // backdrop: the portal header uses `backdrop-blur`, which establishes a
+  // containing block for fixed descendants, so the backdrop would only cover
+  // the header, not the page below it.
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
 
   const load = useCallback(async () => {
     try {
@@ -194,7 +215,7 @@ export default function NotificationBell() {
   )
 
   return (
-    <div className="relative">
+    <div className="relative" ref={rootRef}>
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
@@ -216,8 +237,6 @@ export default function NotificationBell() {
       </button>
 
       {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden="true" />
           <div className="absolute right-0 mt-2 w-80 max-w-[90vw] bg-white rounded-xl shadow-lg ring-1 ring-black/5 z-50 overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
               <span className="text-sm font-semibold text-slate-800">Notifications</span>
@@ -291,7 +310,6 @@ export default function NotificationBell() {
               )}
             </div>
           </div>
-        </>
       )}
     </div>
   )

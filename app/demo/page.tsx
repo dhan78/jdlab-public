@@ -42,6 +42,7 @@ export default async function DemoPage() {
   // Group the lab's annotations by the attachment they belong to.
   const annByAttachment = new Map<string, ScanAnnotation[]>()
   for (const a of annotations) {
+    if (!a.attachmentId) continue // preview-anchored pins aren't shown in the demo
     const mapped: ScanAnnotation = {
       id: a.id,
       kind: a.kind,

@@ -31,6 +31,13 @@ export function formatDoctorName(name?: string | null): string {
   return /^dr\.?\s/i.test(n) ? n : `Dr. ${n}`
 }
 
+// A case created by automated scan ingestion arrives with only a title + scan;
+// the doctor still needs to add patient + tooth. Flag those so the UI can show
+// a "Needs details" prompt until they're filled in.
+export function caseNeedsDetails(c: { patientName?: string | null; toothRef?: string | null }): boolean {
+  return !c.patientName?.trim() || !c.toothRef?.trim()
+}
+
 export const CASE_STATUSES: CaseStatus[] = [
   'received',
   'planning',

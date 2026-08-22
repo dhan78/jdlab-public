@@ -10,10 +10,14 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  CopyObjectCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import { scanRawKeyFromExternalId } from './ingest-source'
 
 const BUCKET = process.env.S3_BUCKET
 const REGION = process.env.AWS_REGION ?? 'us-east-1'
@@ -84,6 +88,29 @@ export async function putAttachment(
   return key
 }
 
+/** Server-side copy an existing S3 object (e.g. an already-uploaded scans/raw/
+ *  scan) into the attachment key space, so ingestion never round-trips a large
+ *  file through the worker. Returns the new attachment key. CopySource is
+ *  `<bucket>/<url-encoded-key>` (segments encoded, slashes preserved). */
+export async function copyIntoAttachments(
+  sourceBucket: string,
+  sourceKey: string,
+  originalName: string,
+  opts?: { caseId?: string | number }
+): Promise<string> {
+  const key = attachmentKey(originalName, opts)
+  const encodedSource = `${sourceBucket}/${sourceKey.split('/').map(encodeURIComponent).join('/')}`
+  await client().send(
+    new CopyObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      CopySource: encodedSource,
+      ServerSideEncryption: 'AES256',
+    })
+  )
+  return key
+}
+
 /** Time-limited presigned GET URL for an S3 object key. */
 export async function getAttachmentUrl(key: string): Promise<string> {
   return getSignedUrl(
@@ -95,6 +122,47 @@ export async function getAttachmentUrl(key: string): Promise<string> {
 
 export async function deleteAttachment(key: string): Promise<void> {
   await client().send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }))
+}
+
+// List every object key under a prefix (paginated).
+async function listAllKeys(bucket: string, prefix: string): Promise<string[]> {
+  const keys: string[] = []
+  let token: string | undefined
+  do {
+    const res = await client().send(
+      new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, ContinuationToken: token })
+    )
+    for (const o of res.Contents ?? []) if (o.Key) keys.push(o.Key)
+    token = res.IsTruncated ? res.NextContinuationToken : undefined
+  } while (token)
+  return keys
+}
+
+// Batch-delete keys (1000 per DeleteObjects call).
+async function deleteKeys(bucket: string, keys: string[]): Promise<number> {
+  let deleted = 0
+  for (let i = 0; i < keys.length; i += 1000) {
+    const chunk = keys.slice(i, i + 1000)
+    await client().send(
+      new DeleteObjectsCommand({
+        Bucket: bucket,
+        Delete: { Objects: chunk.map(Key => ({ Key })), Quiet: true },
+      })
+    )
+    deleted += chunk.length
+  }
+  return deleted
+}
+
+/** Hard-delete ALL of a case's attachment objects (`case-attachments/cases/<id>/`).
+ *  Used by the admin case purge. No-op without S3. Guards against an empty/broad
+ *  prefix so it can never wipe the whole bucket. */
+export async function deleteCaseAttachments(caseId: string | number): Promise<number> {
+  if (!BUCKET) return 0
+  const prefix = caseKeyPrefix(caseId)
+  if (!prefix.startsWith(`${PREFIX}cases/`) || prefix.endsWith('/cases/')) return 0
+  const keys = await listAllKeys(BUCKET, prefix)
+  return keys.length ? deleteKeys(BUCKET, keys) : 0
 }
 
 // Presigned PUT URL for a DIRECT browser upload (bypasses the JSON body / base64
@@ -116,4 +184,68 @@ export async function headAttachment(key: string): Promise<{ size: number } | nu
   } catch {
     return null
   }
+}
+
+// --- Optimized scan previews (GLB) --------------------------------------------
+// The S3 conversion Lambda writes decimated GLBs under SCAN_GLB_PREFIX in
+// SCAN_BUCKET (a zip fans out to one GLB per mesh; an STL/PLY yields one). We
+// resolve them at VIEW time from a case's source scan key — no callback, no
+// stored case↔glb link — so previews appear whenever conversion has finished.
+// Off (returns []) unless SCAN_BUCKET is configured, so dev degrades cleanly.
+
+const SCAN_BUCKET = process.env.SCAN_BUCKET
+const SCAN_RAW_PREFIX = (process.env.SCAN_RAW_PREFIX ?? 'scans/raw/').replace(/^\/+/, '')
+const SCAN_GLB_PREFIX = (process.env.SCAN_GLB_PREFIX ?? 'scans/glb/').replace(/^\/+/, '')
+
+export interface GlbPreview {
+  id: string
+  name: string
+  url: string
+  size: number
+}
+
+// The S3 ingestion source sets externalId = "s3:<key>:<etag>"; recover <key>
+// only when it lives under the raw-scan prefix (parsing in ./ingest-source).
+export async function resolveGlbPreviews(externalId?: string | null): Promise<GlbPreview[]> {
+  if (!SCAN_BUCKET) return []
+  const rawKey = scanRawKeyFromExternalId(externalId, SCAN_RAW_PREFIX)
+  if (!rawKey) return []
+  const stem = rawKey.slice(SCAN_RAW_PREFIX.length).replace(/\.[^./]+$/, '')
+  try {
+    const res = await client().send(
+      new ListObjectsV2Command({ Bucket: SCAN_BUCKET, Prefix: `${SCAN_GLB_PREFIX}${stem}` })
+    )
+    const objs = (res.Contents ?? []).filter(o => o.Key?.toLowerCase().endsWith('.glb'))
+    objs.sort((a, b) => (a.Key ?? '').localeCompare(b.Key ?? ''))
+    return Promise.all(
+      objs.map(async o => ({
+        id: o.Key!,
+        name: o.Key!.split('/').pop()!,
+        size: o.Size ?? 0,
+        url: await getSignedUrl(client(), new GetObjectCommand({ Bucket: SCAN_BUCKET, Key: o.Key! }), {
+          expiresIn: PRESIGN_TTL_SECONDS,
+        }),
+      }))
+    )
+  } catch {
+    return []
+  }
+}
+
+/** Hard-delete a case's SOURCE scan artifacts from the scan bucket: the raw
+ *  scan (`scans/raw/<key>`) and every derived GLB preview (`scans/glb/<stem>…`).
+ *  Used by the admin case purge so no scan storage is left in AWS. No-op when
+ *  the scan bucket isn't configured or the externalId isn't an s3: raw key. */
+export async function deleteScanArtifacts(externalId?: string | null): Promise<number> {
+  if (!SCAN_BUCKET) return 0
+  const rawKey = scanRawKeyFromExternalId(externalId, SCAN_RAW_PREFIX)
+  if (!rawKey) return 0
+  const stem = rawKey.slice(SCAN_RAW_PREFIX.length).replace(/\.[^./]+$/, '')
+  const glbKeys = (await listAllKeys(SCAN_BUCKET, `${SCAN_GLB_PREFIX}${stem}`)).filter(k => {
+    // Only this scan's GLBs: `<stem>.glb` or a `<stem>/…` fan-out folder — never
+    // a sibling whose stem merely starts with the same characters.
+    const rest = k.slice(SCAN_GLB_PREFIX.length)
+    return rest === `${stem}.glb` || rest.startsWith(`${stem}/`)
+  })
+  return deleteKeys(SCAN_BUCKET, [rawKey, ...glbKeys])
 }

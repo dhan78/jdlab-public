@@ -38,6 +38,10 @@ jobs:
       - name: Type Check
         run: npm run type-check
 
+      #- name: Test
+      #  run: npm run test
+
+
   # 2. CD Job: Build Docker Image and Publish to GitHub Container Registry (GHCR)
   build-and-push-docker: 
     needs: validate-and-test 
@@ -133,6 +137,8 @@ jobs:
           outputs: type=image,compression=zstd,push=true
           build-args: |
             PORTAL_JWT_SECRET=${{ secrets.PORTAL_JWT_SECRET }}
+
+
 
   # 3. Cleanup Job: Prune older container images to save storage space
   prune-old-images: 

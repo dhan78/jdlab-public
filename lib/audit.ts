@@ -16,6 +16,7 @@ export type AuditAction =
   | 'case.create'
   | 'case.status_change'
   | 'case.scan_received'
+  | 'case.delete'
   | 'message.create'
   | 'doctor.create'
   | 'doctor.delete'
@@ -24,8 +25,11 @@ export type AuditAction =
   | 'password.reset_complete'
   | 'demo.toggle'
   | 'case.ingest'
+  | 'case.details_update'
   | 'practice_map.set'
   | 'practice_map.delete'
+  | 'marketing_image.upload'
+  | 'marketing_image.delete'
 
 function toIntOrNull(v: string | number | null | undefined): number | null {
   if (v === null || v === undefined) return null

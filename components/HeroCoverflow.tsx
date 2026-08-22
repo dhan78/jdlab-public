@@ -3,32 +3,50 @@
 import { useEffect, useState, useCallback } from 'react'
 import Image from 'next/image'
 
-const labImages = [
-  { src: '/images/hero-dental-robotics.jpg', alt: 'Scientists in lab coats analyzing robotic arm for dental technology' },
-  { src: '/images/hero-dental-implant.jpg', alt: 'Precision dental implant model with jaw structure' },
-  { src: '/images/hero-dental-3dprint.jpg', alt: '3D printed dental model in laboratory setting' },
-  { src: '/images/hero-robotic-surgery.jpg', alt: 'Scientist supervising robotic surgical equipment in dental technology' },
-  { src: '/images/hero-medical-device.jpg', alt: 'Medical device technician crafting orthotic in workshop' },
-  { src: '/images/hero-robot-lab.jpg', alt: 'Robotic automation in precision lab environment' },
-]
+interface HeroImage {
+  src: string
+  alt: string
+}
 
 export default function HeroCoverflow() {
+  const [labImages, setLabImages] = useState<HeroImage[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
   const total = labImages.length
 
+  // The carousel is driven by whatever lives in public/images/hero, so adding
+  // or removing a file there changes it with no code edit.
+  useEffect(() => {
+    let alive = true
+    fetch('/api/hero-images', { cache: 'no-store' })
+      .then(r => r.json())
+      .then((d: { images: HeroImage[] }) => {
+        if (alive) setLabImages(d.images ?? [])
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
+
   const next = useCallback(() => {
-    setActiveIndex((prev) => (prev + 1) % total)
+    setActiveIndex((prev) => (total ? (prev + 1) % total : 0))
   }, [total])
 
   const prev = useCallback(() => {
-    setActiveIndex((prev) => (prev - 1 + total) % total)
+    setActiveIndex((prev) => (total ? (prev - 1 + total) % total : 0))
   }, [total])
 
   // Auto-rotate every 4 seconds
   useEffect(() => {
+    if (total < 2) return
     const timer = setInterval(next, 4000)
     return () => clearInterval(timer)
-  }, [next])
+  }, [next, total])
+
+  // Keep the active index valid if the image list shrinks.
+  useEffect(() => {
+    if (activeIndex >= total && total > 0) setActiveIndex(0)
+  }, [activeIndex, total])
 
   // Given an index, compute the position relative to active
   const getOffset = (index: number) => {
@@ -38,6 +56,8 @@ export default function HeroCoverflow() {
     if (diff < -Math.floor(total / 2)) diff += total
     return diff
   }
+
+  if (total === 0) return null
 
   return (
     <div className="relative w-full max-w-4xl mx-auto h-56 sm:h-64 md:h-72 lg:h-80">

@@ -50,8 +50,11 @@ export const INTENTS = {
   design_approve: 'Approve the design',
   case_pin_toggle: 'Pin/unpin the case',
   case_read_toggle: 'Mark the case read/unread',
+  case_details_open: 'Open the case-details editor',
+  case_details_save: 'Save edited case details',
   scans_received_mark: 'Mark scans as received (starts the SLA clock)',
   status_change: 'Change the case status',
+  case_delete: 'Admin: permanently delete a case and all its files',
   call_start: 'Start a live video call (placeholder)',
 
   // --- Attachments / viewers ---
@@ -102,6 +105,15 @@ export const INTENTS = {
   // --- Admin: scan-ingestion practice routing ---
   practice_map_save: 'Add/update a practice -> doctor mapping',
   practice_map_delete: 'Remove a practice -> doctor mapping',
+
+  // --- Admin: marketing images ---
+  marketing_image_drop: 'Drop/choose marketing images to optimize + save',
+  marketing_image_collection: 'Pick the collection for uploaded images',
+  marketing_image_copy_path: 'Copy a marketing image path',
+  marketing_image_delete: 'Remove a marketing image',
+
+  // --- Admin: dashboard nav ---
+  admin_nav: 'Switch admin dashboard section',
 
   // --- Admin: telemetry viewer ---
   telemetry_session_open: 'Open a telemetry session timeline',

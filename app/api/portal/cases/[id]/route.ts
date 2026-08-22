@@ -5,14 +5,19 @@ import {
   findCaseById,
   listMessagesForCase,
   updateCaseStatus,
+  updateCaseDetails,
   setScanReceived,
   getUnreadCounts,
   isCasePinned,
+  purgeCase,
   CASE_STATUSES,
   CASE_STATUS_LABELS,
+  CASE_TYPES,
   type CaseStatus,
+  type CaseType,
 } from '@/lib/case-store'
 import { findDoctorById } from '@/lib/portal-store'
+import { resolveGlbPreviews } from '@/lib/storage'
 import { recordAudit } from '@/lib/audit'
 import { clientIp } from '@/lib/rate-limit'
 import { emitCaseUpdate } from '@/lib/case-events'
@@ -68,10 +73,12 @@ export async function GET(
     messages: await listMessagesForCase(id),
     slaConfig: await getSlaConfigMap(),
     unreadCount: unread[id] ?? 0,
+    glbPreviews: await resolveGlbPreviews(caseRow.scanCaseId),
   })
 }
 
-// PATCH: update case status. Only planners/admins move a case through stages.
+// PATCH: fill in case details (case owner or lab team) or move a case through
+// stages / mark scans received (lab team only).
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -81,6 +88,56 @@ export async function PATCH(
   if (!session) {
     return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
   }
+
+  const caseRow = await findCaseById(id)
+  if (!caseRow) {
+    return NextResponse.json({ error: 'Case not found' }, { status: 404 })
+  }
+
+  let body: { status?: unknown; scanReceived?: unknown; details?: unknown }
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
+  }
+
+  // --- Fill in / edit case details: the case owner (doctor) or the lab team ---
+  if (body.details && typeof body.details === 'object') {
+    if (!canAccess(session, caseRow.doctorId)) {
+      return NextResponse.json({ error: 'You do not have access to this case' }, { status: 403 })
+    }
+    const d = body.details as Record<string, unknown>
+    // undefined = leave unchanged; '' = clear; else trimmed value.
+    const opt = (v: unknown, max: number): string | null | undefined =>
+      v === undefined ? undefined : typeof v === 'string' ? (v.trim() ? v.trim().slice(0, max) : null) : undefined
+    const title = typeof d.title === 'string' && d.title.trim() ? d.title.trim().slice(0, 200) : undefined
+    const caseType = CASE_TYPES.includes(d.caseType as CaseType) ? (d.caseType as CaseType) : undefined
+    const isRush = typeof d.isRush === 'boolean' ? d.isRush : undefined
+
+    const updated = await updateCaseDetails(id, {
+      title,
+      patientName: opt(d.patientName, 200),
+      surgeryDate: opt(d.surgeryDate, 20),
+      toothRef: opt(d.toothRef, 100),
+      material: opt(d.material, 100),
+      scannerBrand: opt(d.scannerBrand, 100),
+      specialInstructions: opt(d.specialInstructions, 2000),
+      shipToAddress: opt(d.shipToAddress, 400),
+      caseType,
+      isRush,
+    })
+    emitCaseUpdate(id, caseRow.doctorId)
+    await recordAudit({
+      actorId: session.sub,
+      actorRole: session.role,
+      action: 'case.details_update',
+      caseToken: id,
+      ip: clientIp(request),
+    })
+    return NextResponse.json({ ok: true, case: updated })
+  }
+
+  // --- Status / scan-receipt changes: lab team only ---
   if (session.role !== 'planner' && session.role !== 'admin') {
     return NextResponse.json(
       { error: 'Only the lab team can update case status' },
@@ -88,20 +145,8 @@ export async function PATCH(
     )
   }
 
-  const caseRow = await findCaseById(id)
-  if (!caseRow) {
-    return NextResponse.json({ error: 'Case not found' }, { status: 404 })
-  }
-
-  let body: { status?: unknown }
-  try {
-    body = await request.json()
-  } catch {
-    return NextResponse.json({ error: 'A valid status is required' }, { status: 400 })
-  }
-
   // Start/stop the SLA clock: planner marks that the scan files arrived.
-  const scanReceived = (body as { scanReceived?: unknown }).scanReceived
+  const scanReceived = body.scanReceived
   if (typeof scanReceived === 'boolean') {
     await setScanReceived(id, scanReceived)
     emitCaseUpdate(id, caseRow.doctorId)
@@ -175,4 +220,40 @@ export async function PATCH(
   })()
 
   return NextResponse.json({ success: true, case: updated })
+}
+
+// DELETE: admin-only hard delete. Purges the case, its thread + status history
+// (DB cascade), all S3 attachments, and the source raw scan + GLB previews, so
+// no storage is left anywhere in AWS.
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params
+  const session = await getSession(request)
+  if (!session) {
+    return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
+  }
+  if (session.role !== 'admin') {
+    return NextResponse.json({ error: 'Only an admin can delete a case' }, { status: 403 })
+  }
+
+  const caseRow = await findCaseById(id)
+  if (!caseRow) {
+    return NextResponse.json({ error: 'Case not found' }, { status: 404 })
+  }
+
+  const result = await purgeCase(id)
+
+  await recordAudit({
+    actorId: session.sub,
+    actorRole: session.role,
+    action: 'case.delete',
+    // No caseToken: the row is gone, so link nothing (avoids a dangling FK);
+    // the identity lives in `detail` for the compliance trail.
+    detail: `purged ${caseRow.caseNumber} (${id}): attachments=${result?.attachmentsDeleted ?? 0}, scanObjects=${result?.scanObjectsDeleted ?? 0}`,
+    ip: clientIp(request),
+  })
+
+  return NextResponse.json({ success: true, ...(result ?? {}) })
 }
