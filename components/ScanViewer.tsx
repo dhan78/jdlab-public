@@ -799,7 +799,10 @@ export default function ScanViewer({
   // makes the browser drop the oldest canvas (model lingers, pins vanish).
   useEffect(() => () => {
     intentionalLossRef.current = true
-    try { glRef.current?.forceContextLoss() } catch { /* already disposed */ }
+    const gl = glRef.current
+    // Only force-lose a LIVE context; calling it on an already-lost one just logs
+    // a noisy WebGL INVALID_OPERATION.
+    try { if (gl && !gl.getContext().isContextLost()) gl.forceContextLoss() } catch { /* already disposed */ }
     glRef.current = null
   }, [])
   useEffect(() => {

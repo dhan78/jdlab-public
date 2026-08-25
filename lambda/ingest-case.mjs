@@ -39,6 +39,10 @@ const TIMEOUT_MS = Number(process.env.INGEST_HTTP_TIMEOUT_MS || 300000)
 
 const s3 = new S3Client({ region: REGION })
 
+// Injectable I/O so tests can pass fakes as a 3rd arg without module mocking —
+// env-independent (can't regress to hitting real S3). Prod uses these defaults.
+const DEFAULT_DEPS = { s3, fetch }
+
 const MODEL_EXTS = ['.stl', '.ply', '.obj', '.zip']
 const isModelFile = name => MODEL_EXTS.some(ext => name.toLowerCase().endsWith(ext))
 
@@ -80,7 +84,7 @@ function extractObject(payload) {
   return { bucket: undefined, key: undefined, etag: '', size: 0 }
 }
 
-export async function handler(event) {
+export async function handler(event, _context, deps = DEFAULT_DEPS) {
   // SQS batch (the production path); fall back to a single direct event.
   const records = Array.isArray(event?.Records) && event.Records[0]?.body
     ? event.Records
@@ -89,7 +93,7 @@ export async function handler(event) {
   const batchItemFailures = []
   for (const record of records) {
     try {
-      await processMessage(record.body)
+      await processMessage(record.body, deps)
     } catch (err) {
       // Return the message to the queue (partial-batch retry); exhausted
       // retries land in the DLQ for human review + replay.
@@ -100,7 +104,8 @@ export async function handler(event) {
   return { batchItemFailures }
 }
 
-async function processMessage(body) {
+async function processMessage(body, deps = DEFAULT_DEPS) {
+  const { s3, fetch } = deps
   const { bucket, key, etag, size } = extractObject(body)
   if (!bucket || !key) {
     console.log('no bucket/key in event — skipping')

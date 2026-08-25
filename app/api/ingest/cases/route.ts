@@ -47,6 +47,7 @@ export async function POST(request: NextRequest) {
     patientName?: unknown
     toothRef?: unknown
     material?: unknown
+    shade?: unknown
     scannerBrand?: unknown
     caseType?: unknown
     isRush?: unknown
@@ -104,6 +105,7 @@ export async function POST(request: NextRequest) {
     patientName: typeof body.patientName === 'string' ? body.patientName.trim().slice(0, 200) : undefined,
     toothRef: typeof body.toothRef === 'string' ? body.toothRef.trim().slice(0, 100) : undefined,
     material: typeof body.material === 'string' ? body.material.trim().slice(0, 100) : undefined,
+    shade: typeof body.shade === 'string' ? body.shade.trim().slice(0, 20) : undefined,
     scannerBrand: typeof body.scannerBrand === 'string' ? body.scannerBrand.trim().slice(0, 100) : undefined,
     scanCaseId: externalId, // stored so findCaseIdByExternalId stays idempotent
     specialInstructions:

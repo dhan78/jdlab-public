@@ -92,6 +92,20 @@
       "when": 1786851581508,
       "tag": "0012_previous_puppet_master",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1787583744659,
+      "tag": "0013_abnormal_blur",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1787584809305,
+      "tag": "0014_curly_hercules",
+      "breakpoints": true
     }
   ]
 }

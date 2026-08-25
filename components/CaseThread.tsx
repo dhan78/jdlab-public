@@ -83,6 +83,7 @@ interface CaseDetail {
   surgeryDate?: string
   toothRef?: string
   material?: string
+  shade?: string
   scannerBrand?: string
   scanCaseId?: string
   scanLink?: string
@@ -1085,6 +1086,7 @@ export default function CaseThread({
               surgeryDate: caseDetail.surgeryDate,
               toothRef: caseDetail.toothRef,
               material: caseDetail.material,
+              shade: caseDetail.shade,
               scannerBrand: caseDetail.scannerBrand,
               isRush: !!caseDetail.isRush,
               specialInstructions: caseDetail.specialInstructions,
@@ -1117,6 +1119,9 @@ export default function CaseThread({
                 <span className="text-xs font-medium text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">{CASE_TYPE_LABELS[caseDetail.caseType]}</span>
                 {caseDetail.material && (
                   <span className="text-xs text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">{caseDetail.material}</span>
+                )}
+                {caseDetail.shade && (
+                  <span className="text-xs text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">Shade {caseDetail.shade}</span>
                 )}
               </div>
               <div className="mt-2 flex items-center gap-4 flex-wrap text-sm">

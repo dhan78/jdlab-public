@@ -120,6 +120,7 @@ export async function PATCH(
       surgeryDate: opt(d.surgeryDate, 20),
       toothRef: opt(d.toothRef, 100),
       material: opt(d.material, 100),
+      shade: opt(d.shade, 20),
       scannerBrand: opt(d.scannerBrand, 100),
       specialInstructions: opt(d.specialInstructions, 2000),
       shipToAddress: opt(d.shipToAddress, 400),
