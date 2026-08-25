@@ -15,7 +15,7 @@
  * Import this ONLY via `next/dynamic` with `{ ssr: false }` — it needs WebGL and
  * must not run during server rendering. See app/scans/viewer/page.tsx.
  */
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls, Html, Bounds, useBounds, Line } from '@react-three/drei'
@@ -972,7 +972,7 @@ export default function ScanViewer({
   }, [onRotate])
   // Stable identity so RotateProbe's listener effect never re-attaches (which
   // would reset its once-per-view guard).
-  const fireRotate = useRef(() => onRotateRef.current?.()).current
+  const fireRotate = useCallback(() => onRotateRef.current?.(), [])
 
   useEffect(() => {
     let cancelled = false
