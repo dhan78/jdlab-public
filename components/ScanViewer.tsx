@@ -60,6 +60,9 @@ interface ScanViewerProps {
    *  `source` reports which tier served it: 'parsed' | 'bytes' | 'network' |
    *  'file' — for cache-hit-rate telemetry. */
   onLoad?: (source?: string) => void
+  /** Called once, the first time the user actually orbits/rotates this scan
+   *  (ignores programmatic framing and pure zoom/pan) — engagement telemetry. */
+  onRotate?: () => void
   /** Existing pins to render on the model. */
   annotations?: ScanAnnotation[]
   /** Create a pin, or a measurement (kind='measure' with a second point B).
@@ -136,31 +139,94 @@ function parseGlb(buffer: ArrayBuffer): Promise<GLTF> {
 // a pristine MASTER and hand each mount a clone, so concurrent viewers (a tiled
 // preview + the maximized overlay of the same scan) never share one scene graph.
 // Clones share the underlying (read-only) geometry/material, so a clone is cheap
-// relative to a full decode. LRU-bounded to cap decoded-mesh memory on mobile.
+// relative to a full decode. LRU-bounded by DECODED BYTES (not entry count) so a
+// mix of tiny and multi-MB scans stays within a device-appropriate memory budget.
 type ParsedScan =
   | { kind: 'glb'; scene: Group }
   | { kind: 'mesh'; geometry: BufferGeometry }
 
-const MAX_PARSED = 8 // ~ one full case's worth of scans
-const parsedCache = new Map<string, ParsedScan>()
+// Real decoded size of a geometry's attribute + index arrays (textures excluded —
+// intraoral scans are geometry-dominated, so this is a close-enough accounting).
+function geometryBytes(g: BufferGeometry): number {
+  let n = 0
+  for (const attr of Object.values(g.attributes)) {
+    const arr = (attr as { array?: ArrayBufferView }).array
+    if (arr) n += arr.byteLength
+  }
+  if (g.index) n += g.index.array.byteLength
+  return n
+}
+
+function parsedBytes(p: ParsedScan): number {
+  if (p.kind === 'mesh') return Math.max(geometryBytes(p.geometry), 1)
+  let n = 0
+  p.scene.traverse(o => {
+    const g = (o as unknown as { geometry?: BufferGeometry }).geometry
+    if (g?.attributes) n += geometryBytes(g)
+  })
+  return Math.max(n, 1)
+}
+
+// Device-tiered budget. deviceMemory is Chrome/Android-only (absent on Safari/iOS),
+// so the coarse-pointer check gates mobile FIRST and catches iPhones/iPads regardless.
+// Mobile is generous (audience skews high-end iPhones) but backed by the pressure
+// trim below, which lets the rare low-RAM device shed cache before iOS jetsam kills
+// the tab — since we can't detect the exact model on Safari.
+function parsedBudgetBytes(): number {
+  if (typeof navigator === 'undefined') return 512 * 1024 * 1024
+  const coarse = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches
+  if (coarse) return 384 * 1024 * 1024
+  const gb = (navigator as unknown as { deviceMemory?: number }).deviceMemory
+  if (gb && gb <= 4) return 256 * 1024 * 1024
+  return 512 * 1024 * 1024
+}
+
+type ParsedEntry = { scan: ParsedScan; bytes: number }
+const PARSED_BUDGET = parsedBudgetBytes()
+const parsedCache = new Map<string, ParsedEntry>()
+let parsedTotal = 0
 
 function parsedGet(key: string): ParsedScan | undefined {
-  const p = parsedCache.get(key)
-  if (p) {
+  const e = parsedCache.get(key)
+  if (e) {
     parsedCache.delete(key)
-    parsedCache.set(key, p) // bump to most-recently-used
+    parsedCache.set(key, e) // bump to most-recently-used
+    return e.scan
   }
-  return p
+  return undefined
 }
 
 function parsedPut(key: string, p: ParsedScan): void {
-  if (parsedCache.has(key)) parsedCache.delete(key)
-  parsedCache.set(key, p)
-  while (parsedCache.size > MAX_PARSED) {
+  const existing = parsedCache.get(key)
+  if (existing) {
+    parsedTotal -= existing.bytes
+    parsedCache.delete(key)
+  }
+  const bytes = parsedBytes(p)
+  parsedCache.set(key, { scan: p, bytes })
+  parsedTotal += bytes
+  // Evict LRU until within budget, but never drop the entry we just added (a
+  // single scan larger than the whole budget still stays resident, size === 1).
+  while (parsedTotal > PARSED_BUDGET && parsedCache.size > 1) {
     const oldest = parsedCache.keys().next().value as string | undefined
-    if (oldest === undefined) break
+    if (oldest === undefined || oldest === key) break
+    parsedTotal -= parsedCache.get(oldest)!.bytes
     parsedCache.delete(oldest)
   }
+}
+
+// Pressure-reactive safety net: a backgrounded tab is iOS's prime jetsam target,
+// so release all decoded masters when the page is hidden/unloaded. Cheaper to
+// re-decode on return than to have the whole tab reloaded mid-review.
+function dropParsedCache(): void {
+  parsedCache.clear()
+  parsedTotal = 0
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') dropParsedCache()
+  })
+  window.addEventListener('pagehide', dropParsedCache)
 }
 
 // A draft pin position awaiting a note (before it's saved).
@@ -353,6 +419,48 @@ type ControlsLike = {
   update?: () => void
   addEventListener?: (type: string, fn: () => void) => void
   removeEventListener?: (type: string, fn: () => void) => void
+}
+
+// Fires `onRotate` ONCE per mounted scene the first time the user actually
+// orbits the model (azimuth/polar moves during a drag). Uses the controls'
+// start/end events to gate measurement to real user drags, so programmatic
+// framing (Bounds) and pure zoom/pan don't count as a rotation.
+function RotateProbe({ onRotate }: { onRotate: () => void }) {
+  const controls = useThree(s => s.controls) as
+    | (ControlsLike & { getAzimuthalAngle?: () => number; getPolarAngle?: () => number })
+    | null
+  useEffect(() => {
+    const c = controls
+    if (!c?.addEventListener || !c.getAzimuthalAngle || !c.getPolarAngle) return
+    let fired = false
+    let interacting = false
+    let az0 = 0
+    let po0 = 0
+    const onStart = () => {
+      interacting = true
+      az0 = c.getAzimuthalAngle!()
+      po0 = c.getPolarAngle!()
+    }
+    const onEnd = () => {
+      interacting = false
+    }
+    const onChange = () => {
+      if (fired || !interacting) return
+      if (Math.abs(c.getAzimuthalAngle!() - az0) > 0.05 || Math.abs(c.getPolarAngle!() - po0) > 0.05) {
+        fired = true
+        onRotate()
+      }
+    }
+    c.addEventListener('start', onStart)
+    c.addEventListener('change', onChange)
+    c.addEventListener('end', onEnd)
+    return () => {
+      c.removeEventListener?.('start', onStart)
+      c.removeEventListener?.('change', onChange)
+      c.removeEventListener?.('end', onEnd)
+    }
+  }, [controls, onRotate])
+  return null
 }
 
 // GLB branch: on mount (per scene) RESTORE the saved camera view for this scan
@@ -760,6 +868,7 @@ export default function ScanViewer({
   className,
   onError,
   onLoad,
+  onRotate,
   annotations,
   onCreateAnnotation,
   onDeleteAnnotation,
@@ -857,6 +966,13 @@ export default function ScanViewer({
   useEffect(() => {
     onLoadRef.current = onLoad
   }, [onLoad])
+  const onRotateRef = useRef(onRotate)
+  useEffect(() => {
+    onRotateRef.current = onRotate
+  }, [onRotate])
+  // Stable identity so RotateProbe's listener effect never re-attaches (which
+  // would reset its once-per-view guard).
+  const fireRotate = useRef(() => onRotateRef.current?.()).current
 
   useEffect(() => {
     let cancelled = false
@@ -1081,6 +1197,7 @@ export default function ScanViewer({
           </>
         )}
         <OrbitControls makeDefault enableDamping={false} enablePan enableZoom enableRotate />
+        <RotateProbe onRotate={fireRotate} />
         <ViewSaver viewKey={viewKey} enabled={!!(geometry || scene)} />
         <FrameOnChange
           signal={`${pins.length}:${addMode}:${draft ? 1 : 0}:${selectedId ?? ''}:${measureMode}:${pendingMeasure ? 1 : 0}:${pendingPoint ? 1 : 0}`}

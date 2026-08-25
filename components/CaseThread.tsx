@@ -1302,6 +1302,7 @@ export default function CaseThread({
                       onCreateAnnotation={pt => createPreviewAnnotation(p.id, pt)}
                       onDeleteAnnotation={deleteAnnotation}
                       onLoad={source => track('scan_view', { caseId, ext: 'glb', size: p.size, source })}
+                      onRotate={() => track('scan_rotate', { caseId, ext: 'glb', size: p.size })}
                       onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: 'glb', size: p.size })}
                     />
                     </ViewportCanvas>
@@ -1385,6 +1386,7 @@ export default function CaseThread({
                                 onCreateAnnotation={p => createAnnotation(a.id, p)}
                                 onDeleteAnnotation={deleteAnnotation}
                                 onLoad={source => track('scan_view', { caseId, ext: a.name.split('.').pop()?.toLowerCase(), size: a.size, source })}
+                                onRotate={() => track('scan_rotate', { caseId, ext: a.name.split('.').pop()?.toLowerCase(), size: a.size })}
                                 onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: a.name.split('.').pop()?.toLowerCase(), size: a.size })}
                               />
                               </ViewportCanvas>
@@ -1577,6 +1579,7 @@ export default function CaseThread({
                   onCreateAnnotation={p => createAnnotation(maximized.id, p)}
                   onDeleteAnnotation={deleteAnnotation}
                   onLoad={source => track('scan_view', { caseId, ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true, source })}
+                  onRotate={() => track('scan_rotate', { caseId, ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true })}
                   onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true })}
                 />
               ) : (
@@ -1616,6 +1619,7 @@ export default function CaseThread({
                 onCreateAnnotation={p => createPreviewAnnotation(maximizedPreview.id, p)}
                 onDeleteAnnotation={deleteAnnotation}
                 onLoad={source => track('scan_view', { caseId, ext: 'glb', size: maximizedPreview.size, maximized: true, source })}
+                onRotate={() => track('scan_rotate', { caseId, ext: 'glb', size: maximizedPreview.size, maximized: true })}
                 onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: 'glb', size: maximizedPreview.size, maximized: true })}
               />
             </div>
