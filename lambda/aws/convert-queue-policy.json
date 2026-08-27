@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowEventBridgeSend",
+      "Effect": "Allow",
+      "Principal": { "Service": "events.amazonaws.com" },
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:<REGION>:<ACCOUNT_ID>:jdlab-scan-convert",
+      "Condition": {
+        "ArnEquals": {
+          "aws:SourceArn": "arn:aws:events:<REGION>:<ACCOUNT_ID>:rule/jdlab-scan-fanout"
+        }
+      }
+    }
+  ]
+}
