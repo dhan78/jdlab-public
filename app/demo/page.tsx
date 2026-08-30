@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation'
 import DemoCaseView, { type DemoModel } from '@/components/DemoCaseView'
+import PilotForm from '@/components/PilotForm'
 import type { ScanAnnotation } from '@/components/ScanViewer'
 import { isDemoEnabled, getDemoCaseId } from '@/lib/demo-config'
 import {
@@ -78,14 +79,17 @@ export default async function DemoPage() {
   }
 
   return (
-    <DemoCaseView
-      title={caseRow.title}
-      caseType={CASE_TYPE_LABELS[caseRow.caseType as CaseType] ?? caseRow.caseType}
-      status={CASE_STATUS_LABELS[caseRow.status as CaseStatus] ?? caseRow.status}
-      toothRef={caseRow.toothRef}
-      material={caseRow.material}
-      turnaround={caseRow.isRush ? 'Rush' : undefined}
-      models={models}
-    />
+    <>
+      <DemoCaseView
+        title={caseRow.title}
+        caseType={CASE_TYPE_LABELS[caseRow.caseType as CaseType] ?? caseRow.caseType}
+        status={CASE_STATUS_LABELS[caseRow.status as CaseStatus] ?? caseRow.status}
+        toothRef={caseRow.toothRef}
+        material={caseRow.material}
+        turnaround={caseRow.isRush ? 'Rush' : undefined}
+        models={models}
+      />
+      <PilotForm />
+    </>
   )
 }

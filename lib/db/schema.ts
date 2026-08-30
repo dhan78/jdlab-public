@@ -312,3 +312,27 @@ export const manufacturingJobs = pgTable(
     caseIdx: index('manufacturing_jobs_case_idx').on(t.caseId),
   })
 )
+
+// Contact + pilot leads captured from the public site (the contact form and the
+// /demo pilot form). One durable table for all inbound leads — `source`
+// distinguishes 'contact' vs 'pilot'; the pilot-only columns are nullable.
+export const contactRequests = pgTable(
+  'contact_requests',
+  {
+    id: serial('id').primaryKey(),
+    source: text('source').notNull().default('contact'), // 'contact' | 'pilot'
+    name: text('name').notNull(),
+    email: text('email').notNull(),
+    phone: text('phone'),
+    service: text('service'), // contact: service of interest
+    message: text('message'), // contact: message; pilot: notes
+    practiceName: text('practice_name'), // pilot only
+    scannerBrand: text('scanner_brand'), // pilot only
+    monthlyVolume: text('monthly_volume'), // pilot only
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  t => ({
+    createdIdx: index('contact_requests_created_idx').on(t.createdAt),
+    sourceIdx: index('contact_requests_source_idx').on(t.source),
+  })
+)
