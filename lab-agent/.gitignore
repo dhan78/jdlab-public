@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.env
+agent-state.json
+*.log
+build/
+dist/
+*.spec
+.venv/
+venv/
+*.egg-info/

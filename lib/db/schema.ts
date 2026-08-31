@@ -61,6 +61,7 @@ export const cases = pgTable(
     surgeryDate: date('surgery_date'), // YYYY-MM-DD
     toothRef: text('tooth_ref'),
     material: text('material'),
+    shade: text('shade'), // VITA shade (e.g. A2) — esthetic color match
     scannerBrand: text('scanner_brand'),
     scanCaseId: text('scan_case_id'),
     scanLink: text('scan_link'),
@@ -279,5 +280,59 @@ export const pushSubscriptions = pgTable(
   },
   t => ({
     userIdx: index('push_subscriptions_user_idx').on(t.userId),
+  })
+)
+
+// A manufacturing job: an approved case file queued for a machine (mill/printer)
+// and pulled by the on-prem lab agent (see /lab-agent) into the CAM/slicer hot
+// folder. Lifecycle: queued -> dropped (agent placed it) -> done | error.
+export const manufacturingJobs = pgTable(
+  'manufacturing_jobs',
+  {
+    id: serial('id').primaryKey(),
+    caseId: integer('case_id')
+      .notNull()
+      .references(() => cases.id, { onDelete: 'cascade' }),
+    // Provenance link to the approved design attachment (nullable so the job
+    // survives if the message/attachment is later removed).
+    attachmentId: integer('attachment_id').references(() => messageAttachments.id, {
+      onDelete: 'set null',
+    }),
+    storageKey: text('storage_key').notNull(), // S3 object the agent downloads
+    fileName: text('file_name').notNull(), // name to write into the hot folder
+    machine: text('machine'), // optional routing hint: 'mill' | 'printer' | free text
+    status: text('status').notNull().default('queued'), // queued|dropped|done|error
+    detail: text('detail'), // last status detail (e.g. an error message)
+    createdBy: integer('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  t => ({
+    statusIdx: index('manufacturing_jobs_status_idx').on(t.status),
+    caseIdx: index('manufacturing_jobs_case_idx').on(t.caseId),
+  })
+)
+
+// Contact + pilot leads captured from the public site (the contact form and the
+// /demo pilot form). One durable table for all inbound leads — `source`
+// distinguishes 'contact' vs 'pilot'; the pilot-only columns are nullable.
+export const contactRequests = pgTable(
+  'contact_requests',
+  {
+    id: serial('id').primaryKey(),
+    source: text('source').notNull().default('contact'), // 'contact' | 'pilot'
+    name: text('name').notNull(),
+    email: text('email').notNull(),
+    phone: text('phone'),
+    service: text('service'), // contact: service of interest
+    message: text('message'), // contact: message; pilot: notes
+    practiceName: text('practice_name'), // pilot only
+    scannerBrand: text('scanner_brand'), // pilot only
+    monthlyVolume: text('monthly_volume'), // pilot only
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  t => ({
+    createdIdx: index('contact_requests_created_idx').on(t.createdAt),
+    sourceIdx: index('contact_requests_source_idx').on(t.source),
   })
 )

@@ -12,6 +12,19 @@
       "Effect": "Allow",
       "Action": ["s3:PutObject"],
       "Resource": "arn:aws:s3:::<SCAN_BUCKET>/scans/glb/*"
+    },
+    {
+      "Sid": "ListRawScans",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": "arn:aws:s3:::<SCAN_BUCKET>",
+      "Condition": { "StringLike": { "s3:prefix": "scans/raw/*" } }
+    },
+    {
+      "Sid": "ConsumeConvertQueue",
+      "Effect": "Allow",
+      "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"],
+      "Resource": "arn:aws:sqs:<REGION>:<ACCOUNT_ID>:jdlab-scan-convert"
     }
   ]
 }

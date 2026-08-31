@@ -5,14 +5,17 @@ in S3 and fans out to two Lambdas via EventBridge:
 
 ```text
 s3://<bucket>/scans/raw/…  --ObjectCreated-->  EventBridge (rule: jdlab-scan-fanout)
-   ├─► jdlab-scan-convert   (handler.mjs)      raw → scans/glb/ GLB preview
-   └─► SQS jdlab-scan-ingest ─► jdlab-scan-ingest (ingest-case.mjs) ─► POST /api/ingest/cases
-                     └─► DLQ jdlab-scan-ingest-dlq  (unmapped / poison → review + replay)
+   ├─► SQS jdlab-scan-convert ─► jdlab-scan-convert (handler.mjs) ─► raw → scans/glb/ GLB preview
+   │                 └─► DLQ jdlab-scan-convert-dlq  (poison / OOM scan → review + replay)
+   └─► SQS jdlab-scan-ingest  ─► jdlab-scan-ingest (ingest-case.mjs) ─► POST /api/ingest/cases
+                     └─► DLQ jdlab-scan-ingest-dlq   (unmapped / poison → review + replay)
 ```
 
 Both branches are independent: a case is created even if GLB conversion fails.
-Idempotency rides `externalId = s3:<key>:<etag>`, so SQS at-least-once redelivery
-never double-creates.
+Both sit behind their own SQS+DLQ, so a poison scan (OOM / corrupt) or transient
+failure redrives then parks in a DLQ instead of vanishing. Idempotency rides
+`externalId = s3:<key>:<etag>` (ingest) and deterministic GLB keys (convert), so
+SQS at-least-once redelivery never double-creates or corrupts output.
 
 ## What this sets up
 
@@ -20,7 +23,7 @@ never double-creates.
 |------|----------|---------|--------|
 | 1 | **`jdlab-scan-convert`** Lambda | STL/PLY/OBJ-zip → decimated Meshopt GLB | ⚠️ Linux x86_64 build (native `sharp`) |
 | 2 | **`jdlab-scan-ingest`** Lambda | Creates a portal case per scan | Single JS file — no build |
-| 3 | **EventBridge + SQS + DLQ + IAM** | Trigger + fan-out wiring | CLI only |
+| 3 | **EventBridge + 2×(SQS + DLQ) + IAM** | Trigger + fan-out wiring | CLI only |
 
 > **Repeatable:** run Part 0, then Parts 1 → 3 in order. Re-running is safe — the
 > `create-*` commands fail if a resource already exists, so for a **clean
@@ -46,17 +49,17 @@ never double-creates.
                     ▼
         EventBridge rule  jdlab-scan-fanout   (prefix = scans/raw/)
             │                                        │
-   target 1 │ Lambda invoke                 target 2 │ SQS send
+   target 1 │ SQS send                      target 2 │ SQS send
             ▼                                        ▼
-   jdlab-scan-convert                        SQS  jdlab-scan-ingest ──(≥5 fails)──▶ DLQ
-   handler.mjs:  raw → GLB                        │                    jdlab-scan-ingest-dlq
-            │                                      │ batch (ReportBatchItemFailures)
-            ▼                                      ▼
-     S3  scans/glb/                        jdlab-scan-ingest  (ingest-case.mjs)
-     (decimated preview)                          │  HEAD object → externalId = s3:<key>:<etag>
-            │                                      │  POST /api/ingest/cases  (Bearer token)
-            │                                      ▼
-            │                               Portal API  (auth · idempotency · route doctor)
+   SQS jdlab-scan-convert ──(≥5)──▶ DLQ      SQS  jdlab-scan-ingest ──(≥5 fails)──▶ DLQ
+            │             jdlab-scan-convert-dlq     │                    jdlab-scan-ingest-dlq
+            │ batch=1 (ReportBatchItemFailures)      │ batch (ReportBatchItemFailures)
+            ▼                                        ▼
+   jdlab-scan-convert  (handler.mjs)         jdlab-scan-ingest  (ingest-case.mjs)
+   raw → GLB                                      │  HEAD object → externalId = s3:<key>:<etag>
+            ▼                                      │  POST /api/ingest/cases  (Bearer token)
+     S3  scans/glb/                                ▼
+     (decimated preview)                    Portal API  (auth · idempotency · route doctor)
             │                                 │  409 / 422 unmapped ─▶ retry → DLQ
             │                     ┌───────────┴───────────┐
             │             addCase │                       │ server-side copyFrom
@@ -149,7 +152,12 @@ cat > /tmp/convert-s3.json <<JSON
   {"Sid":"ReadRawScans","Effect":"Allow","Action":["s3:GetObject"],
    "Resource":"arn:aws:s3:::$SCAN_BUCKET/scans/raw/*"},
   {"Sid":"WriteConvertedGlb","Effect":"Allow","Action":["s3:PutObject"],
-   "Resource":"arn:aws:s3:::$SCAN_BUCKET/scans/glb/*"}]}
+   "Resource":"arn:aws:s3:::$SCAN_BUCKET/scans/glb/*"},
+  {"Sid":"ListRawScans","Effect":"Allow","Action":["s3:ListBucket"],
+   "Resource":"arn:aws:s3:::$SCAN_BUCKET","Condition":{"StringLike":{"s3:prefix":"scans/raw/*"}}},
+  {"Sid":"ConsumeConvertQueue","Effect":"Allow",
+   "Action":["sqs:ReceiveMessage","sqs:DeleteMessage","sqs:GetQueueAttributes"],
+   "Resource":"arn:aws:sqs:$REGION:$ACCOUNT_ID:jdlab-scan-convert"}]}
 JSON
 aws iam create-role --role-name jdlab-scan-convert \
   --assume-role-policy-document file:///tmp/trust.json
@@ -177,11 +185,14 @@ aws lambda wait function-active --function-name jdlab-scan-convert --region $REG
 >   --architectures x86_64 --region $REGION
 > ```
 
-⚠️ **Event-shape:** the trigger is EventBridge (Part 3), whose events use
-`detail.object.key` — NOT the classic `Records[].s3` shape. `handler.mjs`
-normalizes **both**. Symptom of a stale build: real uploads log `converted:0`
-(no GLB) while a manual invoke with a `{"Records":[…]}` payload works → redeploy
-a handler that includes the `detail.*` parsing.
+⚠️ **Event-shape:** the trigger is SQS (Part 3), whose records wrap the
+EventBridge "Object Created" event as a JSON string in `Records[].body`.
+`handler.mjs` peels the SQS envelope, then normalizes the inner `detail.object.key`
+(EventBridge) **and** the classic `Records[].s3` shape — so manual invokes with a
+bare EventBridge/S3 payload still work. It returns `{batchItemFailures}` so a
+failed scan redrives to the DLQ instead of failing the whole batch. Symptom of a
+stale build: real uploads log `converted:0` (no GLB) while a manual EventBridge
+invoke works → redeploy a handler that includes the SQS-envelope parsing.
 
 ### 1.4 Manual test (no trigger; needs `scans/raw/test.stl` to exist)
 
@@ -260,9 +271,14 @@ aws s3api put-bucket-notification-configuration --bucket $SCAN_BUCKET \
 > This replaces the whole notification config with EventBridge-only, removing any
 > legacy direct S3→Lambda trigger (which would otherwise double-invoke convert).
 
-### 3.2 DLQ + ingest queue (redrive after 5 receives)
+### 3.2 DLQs + queues (both branches; redrive after 5 receives)
+
+Each branch gets its own SQS queue + DLQ. Convert sits behind SQS too (not a
+direct Lambda target), so a poison/OOM scan redrives then parks in a DLQ instead
+of being dropped by async-invoke retry.
 
 ```bash
+# --- Ingest queue + DLQ ---
 DLQ_URL=$(aws sqs create-queue --queue-name jdlab-scan-ingest-dlq \
   --attributes MessageRetentionPeriod=1209600 \
   --query QueueUrl --output text --region $REGION)
@@ -276,27 +292,48 @@ JSON
 )" --query QueueUrl --output text --region $REGION)
 QUEUE_ARN=$(aws sqs get-queue-attributes --queue-url "$QUEUE_URL" \
   --attribute-names QueueArn --query Attributes.QueueArn --output text --region $REGION)
+
+# --- Convert queue + DLQ ---
+CONV_DLQ_URL=$(aws sqs create-queue --queue-name jdlab-scan-convert-dlq \
+  --attributes MessageRetentionPeriod=1209600 \
+  --query QueueUrl --output text --region $REGION)
+CONV_DLQ_ARN=$(aws sqs get-queue-attributes --queue-url "$CONV_DLQ_URL" \
+  --attribute-names QueueArn --query Attributes.QueueArn --output text --region $REGION)
+
+CONV_QUEUE_URL=$(aws sqs create-queue --queue-name jdlab-scan-convert --attributes "$(cat <<JSON
+{ "VisibilityTimeout":"360","MessageRetentionPeriod":"345600",
+  "RedrivePolicy":"{\"deadLetterTargetArn\":\"$CONV_DLQ_ARN\",\"maxReceiveCount\":\"5\"}" }
+JSON
+)" --query QueueUrl --output text --region $REGION)
+CONV_QUEUE_ARN=$(aws sqs get-queue-attributes --queue-url "$CONV_QUEUE_URL" \
+  --attribute-names QueueArn --query Attributes.QueueArn --output text --region $REGION)
 ```
 
-> VisibilityTimeout (330 s) must be ≥ the ingest Lambda timeout (300 s).
+> VisibilityTimeout must be ≥ the Lambda timeout: ingest 330 s ≥ 300 s; convert
+> 360 s ≥ 300 s. Bump the convert queue's VisibilityTimeout if you raise the
+> convert Lambda's timeout (heavy meshes) — a too-short visibility re-delivers a
+> still-running message and double-converts.
 
-### 3.3 Let EventBridge send to the queue (queue policy)
+### 3.3 Let EventBridge send to both queues (queue policies)
 
 ```bash
-cat > /tmp/queue-policy.json <<JSON
+for pair in "$QUEUE_URL|$QUEUE_ARN" "$CONV_QUEUE_URL|$CONV_QUEUE_ARN"; do
+  url=${pair%|*}; arn=${pair#*|}
+  cat > /tmp/queue-policy.json <<JSON
 { "Version":"2012-10-17","Statement":[{
   "Sid":"AllowEventBridgeSend","Effect":"Allow",
   "Principal":{"Service":"events.amazonaws.com"},
-  "Action":"sqs:SendMessage","Resource":"$QUEUE_ARN",
+  "Action":"sqs:SendMessage","Resource":"$arn",
   "Condition":{"ArnEquals":{"aws:SourceArn":"arn:aws:events:$REGION:$ACCOUNT_ID:rule/jdlab-scan-fanout"}}}]}
 JSON
-# Pass as a JSON attribute map (stringified) via jq — the Key=Value shorthand
-# breaks on the policy JSON's commas.
-aws sqs set-queue-attributes --queue-url "$QUEUE_URL" --region $REGION \
-  --attributes "$(jq -n --arg p "$(cat /tmp/queue-policy.json)" '{Policy:$p}')"
+  # Pass as a JSON attribute map (stringified) via jq — the Key=Value shorthand
+  # breaks on the policy JSON's commas.
+  aws sqs set-queue-attributes --queue-url "$url" --region $REGION \
+    --attributes "$(jq -n --arg p "$(cat /tmp/queue-policy.json)" '{Policy:$p}')"
+done
 ```
 
-### 3.4 EventBridge rule + both targets
+### 3.4 EventBridge rule + both targets (both are queues now)
 
 ```bash
 cat > /tmp/pattern.json <<JSON
@@ -306,28 +343,37 @@ JSON
 aws events put-rule --name jdlab-scan-fanout --region $REGION \
   --event-pattern file:///tmp/pattern.json
 
-# Target 1: the conversion Lambda. Target 2: the ingest SQS queue.
+# Both targets are SQS queues now (convert is no longer a direct Lambda target).
 aws events put-targets --rule jdlab-scan-fanout --region $REGION --targets \
-  "Id=convert,Arn=arn:aws:lambda:$REGION:$ACCOUNT_ID:function:jdlab-scan-convert" \
+  "Id=convert,Arn=$CONV_QUEUE_ARN" \
   "Id=ingest,Arn=$QUEUE_ARN"
-
-# Allow the rule to invoke the conversion Lambda (queue perm was 3.3).
-aws lambda add-permission --function-name jdlab-scan-convert \
-  --statement-id eb-fanout --action lambda:InvokeFunction \
-  --principal events.amazonaws.com --region $REGION \
-  --source-arn arn:aws:events:$REGION:$ACCOUNT_ID:rule/jdlab-scan-fanout
 ```
 
-### 3.5 Wire SQS → ingest Lambda (partial-batch failures)
+> **Migrating an existing install:** the old rule had a direct-Lambda `convert`
+> target and a `lambda add-permission` (`--statement-id eb-fanout`). `put-targets`
+> above overwrites the target in place; optionally drop the now-unused permission:
+> `aws lambda remove-permission --function-name jdlab-scan-convert --statement-id eb-fanout --region $REGION`.
+
+### 3.5 Wire both queues → their Lambdas (partial-batch failures)
 
 ```bash
+# Ingest: small batches are fine (cheap POST per message).
 aws lambda create-event-source-mapping --function-name jdlab-scan-ingest \
   --event-source-arn "$QUEUE_ARN" --batch-size 10 \
+  --function-response-types ReportBatchItemFailures --region $REGION
+
+# Convert: batch-size 1 (one heavy mesh job per invocation) + a concurrency cap
+# so a burst of uploads can't spawn N memory-heavy converts at once.
+aws lambda create-event-source-mapping --function-name jdlab-scan-convert \
+  --event-source-arn "$CONV_QUEUE_ARN" --batch-size 1 \
+  --scaling-config MaximumConcurrency=5 \
   --function-response-types ReportBatchItemFailures --region $REGION
 ```
 
 `ReportBatchItemFailures` lets one bad message retry without re-running the whole
-batch; after `maxReceiveCount` (5) it lands in `jdlab-scan-ingest-dlq`.
+batch; after `maxReceiveCount` (5) it lands in the matching `…-dlq`. The convert
+mapping uses `batch-size 1` (one scan per invocation — a failure only redrives
+that scan) and `MaximumConcurrency=5` to bound peak memory/cost under a burst.
 
 ---
 
@@ -364,6 +410,7 @@ aws events list-targets-by-rule --rule jdlab-scan-fanout --region $REGION --quer
 | Ingest code | `zip -j /tmp/ingest.zip ~/ingest-case.mjs` → `update-function-code … jdlab-scan-ingest` |
 | Ingest env var | `aws lambda update-function-configuration --function-name jdlab-scan-ingest --environment …` |
 | Rule pattern | re-run Part 3.4 `put-rule` (idempotent) |
+| Repoint convert to SQS (migration) | re-run Part 3.2–3.5 convert lines |
 | Full clean reinstall | Part 6 teardown → Parts 1–3 |
 
 ---
@@ -371,14 +418,19 @@ aws events list-targets-by-rule --rule jdlab-scan-fanout --region $REGION --quer
 ## Part 6 — Teardown
 
 ```bash
-aws lambda delete-event-source-mapping --uuid "$(aws lambda list-event-source-mappings \
-  --function-name jdlab-scan-ingest --query 'EventSourceMappings[0].UUID' --output text --region $REGION)" --region $REGION
+for fn in jdlab-scan-ingest jdlab-scan-convert; do
+  uuid=$(aws lambda list-event-source-mappings --function-name $fn \
+    --query 'EventSourceMappings[0].UUID' --output text --region $REGION)
+  [ "$uuid" != "None" ] && aws lambda delete-event-source-mapping --uuid "$uuid" --region $REGION
+done
 aws events remove-targets --rule jdlab-scan-fanout --ids convert ingest --region $REGION
 aws events delete-rule --name jdlab-scan-fanout --region $REGION
 aws lambda delete-function --function-name jdlab-scan-ingest --region $REGION
 aws lambda delete-function --function-name jdlab-scan-convert --region $REGION
 aws sqs delete-queue --queue-url "$QUEUE_URL" --region $REGION
 aws sqs delete-queue --queue-url "$DLQ_URL" --region $REGION
+aws sqs delete-queue --queue-url "$CONV_QUEUE_URL" --region $REGION
+aws sqs delete-queue --queue-url "$CONV_DLQ_URL" --region $REGION
 aws iam delete-role-policy --role-name jdlab-scan-ingest  --policy-name ingest-perms 2>/dev/null
 aws iam delete-role-policy --role-name jdlab-scan-convert --policy-name scan-s3-rw   2>/dev/null
 for r in jdlab-scan-ingest jdlab-scan-convert; do
@@ -421,15 +473,21 @@ done
 - **Convert must build on Linux x86_64.** Native `sharp`/libvips is OS/CPU
   specific; a Windows/macOS build → `Cannot find module '…sharp-linux-x64…'`.
   Deploy x86_64 to match CloudShell.
-- **Event-shape:** both Lambdas parse EventBridge `detail.*` AND classic
-  `Records[].s3`. A convert build that only reads `Records` no-ops on real
-  uploads (`converted:0`) but "works" on a manual `{Records:[]}` invoke.
+- **Event-shape:** ingest parses the SQS envelope then EventBridge `detail.*` /
+  classic `Records[].s3`; convert now does the same (SQS `Records[].body` →
+  EventBridge `detail.*`). A convert build that only reads a bare EventBridge
+  event no-ops on the SQS path (`batchItemFailures` empty, no GLB) but "works" on
+  a manual `{detail:{…}}` invoke — redeploy the SQS-aware handler.
 - **SQS policy** must be a stringified JSON attribute map via `jq` — the
   `Key=Value` shorthand breaks on the policy's commas.
 - **CloudShell HOME is 1 GB** → build in `/tmp` (`--cache /tmp/.npmcache`).
 - **Convert deploy via S3** (`--s3-bucket/--s3-key`); `--zip-file` inline caps at
   50 MB. Ingest is tiny → inline `--zip-file` is fine.
-- **VisibilityTimeout ≥ Lambda timeout** (330 ≥ 300).
+- **VisibilityTimeout ≥ Lambda timeout** (ingest 330 ≥ 300; convert 360 ≥ 300).
+- **Phantom `s3:ListBucket` AccessDenied** on convert = the object doesn't exist.
+  Without `ListBucket`, S3 masks 404 as `403 AccessDenied` naming `s3:ListBucket`.
+  The role grants a `scans/raw/*`-scoped `ListBucket` so a real miss logs a clean
+  `NoSuchKey` — GetObject of an existing object never needed it.
 - **IAM propagation:** `sleep 10` before `create-function` after making a role.
 - **`create-*` fails if the resource exists** — use `update-*` or teardown first.
 - `export AWS_PAGER=""` so the CLI pager doesn't hijack output.

@@ -83,6 +83,7 @@ interface CaseDetail {
   surgeryDate?: string
   toothRef?: string
   material?: string
+  shade?: string
   scannerBrand?: string
   scanCaseId?: string
   scanLink?: string
@@ -1085,6 +1086,7 @@ export default function CaseThread({
               surgeryDate: caseDetail.surgeryDate,
               toothRef: caseDetail.toothRef,
               material: caseDetail.material,
+              shade: caseDetail.shade,
               scannerBrand: caseDetail.scannerBrand,
               isRush: !!caseDetail.isRush,
               specialInstructions: caseDetail.specialInstructions,
@@ -1117,6 +1119,9 @@ export default function CaseThread({
                 <span className="text-xs font-medium text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">{CASE_TYPE_LABELS[caseDetail.caseType]}</span>
                 {caseDetail.material && (
                   <span className="text-xs text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">{caseDetail.material}</span>
+                )}
+                {caseDetail.shade && (
+                  <span className="text-xs text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">Shade {caseDetail.shade}</span>
                 )}
               </div>
               <div className="mt-2 flex items-center gap-4 flex-wrap text-sm">
@@ -1297,6 +1302,7 @@ export default function CaseThread({
                       onCreateAnnotation={pt => createPreviewAnnotation(p.id, pt)}
                       onDeleteAnnotation={deleteAnnotation}
                       onLoad={source => track('scan_view', { caseId, ext: 'glb', size: p.size, source })}
+                      onRotate={() => track('scan_rotate', { caseId, ext: 'glb', size: p.size })}
                       onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: 'glb', size: p.size })}
                     />
                     </ViewportCanvas>
@@ -1380,6 +1386,7 @@ export default function CaseThread({
                                 onCreateAnnotation={p => createAnnotation(a.id, p)}
                                 onDeleteAnnotation={deleteAnnotation}
                                 onLoad={source => track('scan_view', { caseId, ext: a.name.split('.').pop()?.toLowerCase(), size: a.size, source })}
+                                onRotate={() => track('scan_rotate', { caseId, ext: a.name.split('.').pop()?.toLowerCase(), size: a.size })}
                                 onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: a.name.split('.').pop()?.toLowerCase(), size: a.size })}
                               />
                               </ViewportCanvas>
@@ -1572,6 +1579,7 @@ export default function CaseThread({
                   onCreateAnnotation={p => createAnnotation(maximized.id, p)}
                   onDeleteAnnotation={deleteAnnotation}
                   onLoad={source => track('scan_view', { caseId, ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true, source })}
+                  onRotate={() => track('scan_rotate', { caseId, ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true })}
                   onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true })}
                 />
               ) : (
@@ -1611,6 +1619,7 @@ export default function CaseThread({
                 onCreateAnnotation={p => createPreviewAnnotation(maximizedPreview.id, p)}
                 onDeleteAnnotation={deleteAnnotation}
                 onLoad={source => track('scan_view', { caseId, ext: 'glb', size: maximizedPreview.size, maximized: true, source })}
+                onRotate={() => track('scan_rotate', { caseId, ext: 'glb', size: maximizedPreview.size, maximized: true })}
                 onError={detail => reportClientError('scan_viewer', caseId, detail, { ext: 'glb', size: maximizedPreview.size, maximized: true })}
               />
             </div>

@@ -30,6 +30,10 @@ export type AuditAction =
   | 'practice_map.delete'
   | 'marketing_image.upload'
   | 'marketing_image.delete'
+  | 'job.enqueue'
+  | 'job.dropped'
+  | 'job.done'
+  | 'job.error'
 
 function toIntOrNull(v: string | number | null | undefined): number | null {
   if (v === null || v === undefined) return null

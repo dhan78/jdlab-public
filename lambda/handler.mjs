@@ -2,12 +2,16 @@
  * S3-triggered Lambda: convert a raw intraoral scan (STL / PLY / OBJ-zip) into a
  * small, decimated, Meshopt-compressed GLB for fast in-browser viewing.
  *
- * Wiring: an S3 ObjectCreated event under RAW_PREFIX invokes this function. It
- * downloads the object, runs the SAME pure-Node `convertScan()` used locally
- * (vendored next to this file at package time — see package.json `vendor`), and
- * writes `<GLB_PREFIX><name>.glb` back to S3. OBJ scans arrive as a .zip
- * (geometry + .mtl + texture); we unzip in-memory and feed the companion files
- * to the converter via `resolveAsset`.
+ * Wiring: an S3 ObjectCreated event under RAW_PREFIX reaches this function via
+ * SQS (EventBridge rule → jdlab-scan-convert queue → this Lambda), mirroring the
+ * ingest path — so a failed/poison conversion redrives a few times then lands in
+ * the DLQ instead of being silently dropped by async-invoke retry. It downloads
+ * the object, runs the SAME pure-Node `convertScan()` used locally (vendored
+ * next to this file at package time — see package.json `vendor`), and writes
+ * `<GLB_PREFIX><name>.glb` back to S3. OBJ scans arrive as a .zip (geometry +
+ * .mtl + texture); we unzip in-memory and feed the companion files to the
+ * converter via `resolveAsset`. Output is a deterministic key, so SQS
+ * at-least-once redelivery just overwrites — safe to retry.
  *
  * Recursion guard: we only process keys under RAW_PREFIX and always write under
  * GLB_PREFIX, so the output never re-triggers the function. The EventBridge rule
@@ -165,11 +169,11 @@ async function processOne(bucket, rawKey) {
   }
 }
 
-// Normalize the trigger into {bucket, rawKey} records. Supports the EventBridge
-// "Object Created" shape (detail.*, key NOT url-encoded) AND the classic S3
-// notification shape (Records[].s3, key url-encoded) — so the function works as
-// an EventBridge target OR a direct S3 trigger, and for manual invokes with
-// either payload.
+// Normalize a single (non-SQS) trigger into {bucket, rawKey} records. Supports
+// the EventBridge "Object Created" shape (detail.*, key NOT url-encoded) AND the
+// classic S3 notification shape (Records[].s3, key url-encoded) — so the parse
+// works for an EventBridge target, a direct S3 trigger, and manual invokes with
+// either payload. (The SQS envelope is peeled off in `handler` before this.)
 function eventRecords(event) {
   if (event?.detail?.bucket) {
     return [{ bucket: event.detail.bucket.name, rawKey: event.detail.object?.key ?? '' }]
@@ -180,7 +184,9 @@ function eventRecords(event) {
   }))
 }
 
-export async function handler(event) {
+// Convert every object referenced by one event. Aggregates per-object results
+// and throws if any failed, so a direct/manual invoke surfaces a non-2xx result.
+async function processEvent(event) {
   const results = []
   for (const { bucket, rawKey } of eventRecords(event)) {
     if (!bucket || !rawKey) continue
@@ -199,4 +205,26 @@ export async function handler(event) {
     throw new Error(`${failed.length}/${results.length} conversion(s) failed: ${failed.map(f => f.key).join(', ')}`)
   }
   return { ok: true, converted: results.length }
+}
+
+export async function handler(event) {
+  // SQS batch (the production path): each record.body is the EventBridge
+  // "Object Created" event as a JSON string. Report per-message failures so only
+  // the failed scan redrives → DLQ (needs ReportBatchItemFailures on the mapping;
+  // batch size is 1, but the loop handles any size).
+  if (Array.isArray(event?.Records) && event.Records[0]?.body !== undefined) {
+    const batchItemFailures = []
+    for (const record of event.Records) {
+      try {
+        await processEvent(JSON.parse(record.body))
+      } catch (err) {
+        // Return the message to the queue; exhausted retries land in the DLQ.
+        console.error(`convert failed (will retry): ${err instanceof Error ? err.stack : err}`)
+        batchItemFailures.push({ itemIdentifier: record.messageId })
+      }
+    }
+    return { batchItemFailures }
+  }
+  // Direct EventBridge target / classic S3 trigger / manual invoke.
+  return processEvent(event)
 }

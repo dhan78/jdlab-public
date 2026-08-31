@@ -11,6 +11,7 @@ interface CaseDetailsInit {
   surgeryDate?: string
   toothRef?: string
   material?: string
+  shade?: string
   scannerBrand?: string
   isRush: boolean
   specialInstructions?: string
@@ -37,6 +38,7 @@ export default function CaseDetailsEditor({ caseToken, initial, onClose, onSaved
     surgeryDate: initial.surgeryDate ?? '',
     toothRef: initial.toothRef ?? '',
     material: initial.material ?? '',
+    shade: initial.shade ?? '',
     scannerBrand: initial.scannerBrand ?? '',
     isRush: initial.isRush ?? false,
     specialInstructions: initial.specialInstructions ?? '',
@@ -127,6 +129,10 @@ export default function CaseDetailsEditor({ caseToken, initial, onClose, onSaved
             <div>
               <label className={label} htmlFor="cd-material">Material</label>
               <input id="cd-material" className={inputField} value={form.material} maxLength={100} onChange={e => set('material', e.target.value)} />
+            </div>
+            <div>
+              <label className={label} htmlFor="cd-shade">Shade</label>
+              <input id="cd-shade" className={inputField} value={form.shade} maxLength={20} placeholder="e.g. A2" onChange={e => set('shade', e.target.value)} />
             </div>
             <div>
               <label className={label} htmlFor="cd-scanner">Scanner brand</label>

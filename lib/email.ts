@@ -203,3 +203,53 @@ export async function sendContactNotification(params: ContactEmailParams) {
     `,
   )
 }
+
+interface PilotEmailParams {
+  name: string
+  practiceName: string
+  email: string
+  phone?: string
+  scannerBrand: string
+  monthlyVolume?: string
+  notes?: string
+  requestId: string
+}
+
+export async function sendPilotNotification(params: PilotEmailParams) {
+  const { name, practiceName, email, phone, scannerBrand, monthlyVolume, notes, requestId } = params
+
+  // Notification to the team (esc() guards against HTML injection in the email).
+  await sendMail(
+    SENDER,
+    `New Pilot Request [${requestId}] - ${esc(practiceName)}`,
+    `
+      <h2>New Pilot / Design-Partner Request</h2>
+      <table style="border-collapse:collapse;width:100%;max-width:600px;">
+        <tr><td style="padding:8px;font-weight:bold;">Request ID</td><td style="padding:8px;">${esc(requestId)}</td></tr>
+        <tr style="background:#f5f5f5;"><td style="padding:8px;font-weight:bold;">Name</td><td style="padding:8px;">${esc(name)}</td></tr>
+        <tr><td style="padding:8px;font-weight:bold;">Practice</td><td style="padding:8px;">${esc(practiceName)}</td></tr>
+        <tr style="background:#f5f5f5;"><td style="padding:8px;font-weight:bold;">Email</td><td style="padding:8px;">${esc(email)}</td></tr>
+        <tr><td style="padding:8px;font-weight:bold;">Phone</td><td style="padding:8px;">${esc(phone || 'N/A')}</td></tr>
+        <tr style="background:#f5f5f5;"><td style="padding:8px;font-weight:bold;">Scanner</td><td style="padding:8px;">${esc(scannerBrand)}</td></tr>
+        <tr><td style="padding:8px;font-weight:bold;">Monthly volume</td><td style="padding:8px;">${esc(monthlyVolume || 'N/A')}</td></tr>
+        <tr style="background:#f5f5f5;"><td style="padding:8px;font-weight:bold;">Notes</td><td style="padding:8px;">${esc(notes || 'N/A')}</td></tr>
+      </table>
+    `,
+    email,
+  )
+
+  // Confirmation to the applicant
+  await sendMail(
+    email,
+    `Thanks for your interest in the JD Dental Lab pilot [${requestId}]`,
+    `
+      <div style="font-family:sans-serif;max-width:600px;margin:0 auto;">
+        <h2 style="color:#0066cc;">Thank you, ${esc(name)}!</h2>
+        <p>We received your pilot request for <strong>${esc(practiceName)}</strong> and will reach out within 1 business day to get you set up.</p>
+        <p>Your reference number is <strong>${esc(requestId)}</strong>.</p>
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;" />
+        <p style="color:#666;font-size:14px;">JD Dental Lab &mdash; Precision Digital Dentistry</p>
+      </div>
+    `,
+  )
+}

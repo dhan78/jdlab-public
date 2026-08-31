@@ -44,6 +44,7 @@ export interface Case {
   surgeryDate?: string
   toothRef?: string
   material?: string
+  shade?: string
   scannerBrand?: string
   scanCaseId?: string
   scanLink?: string
@@ -87,6 +88,7 @@ function mapCase(row: CaseRow, doctorName: string): Case {
     surgeryDate: row.surgeryDate ?? undefined,
     toothRef: row.toothRef ?? undefined,
     material: row.material ?? undefined,
+    shade: row.shade ?? undefined,
     scannerBrand: row.scannerBrand ?? undefined,
     scanCaseId: row.scanCaseId ?? undefined,
     scanLink: row.scanLink ?? undefined,
@@ -111,6 +113,7 @@ export async function addCase(input: {
   surgeryDate?: string
   toothRef?: string
   material?: string
+  shade?: string
   scannerBrand?: string
   scanCaseId?: string
   scanLink?: string
@@ -129,6 +132,7 @@ export async function addCase(input: {
       surgeryDate: input.surgeryDate ?? null,
       toothRef: input.toothRef ?? null,
       material: input.material ?? null,
+      shade: input.shade ?? null,
       scannerBrand: input.scannerBrand ?? null,
       scanCaseId: input.scanCaseId ?? null,
       scanLink: input.scanLink ?? null,
@@ -162,6 +166,7 @@ export async function updateCaseDetails(
     surgeryDate?: string | null
     toothRef?: string | null
     material?: string | null
+    shade?: string | null
     scannerBrand?: string | null
     specialInstructions?: string | null
     shipToAddress?: string | null
@@ -175,6 +180,7 @@ export async function updateCaseDetails(
   if (fields.surgeryDate !== undefined) set.surgeryDate = fields.surgeryDate
   if (fields.toothRef !== undefined) set.toothRef = fields.toothRef
   if (fields.material !== undefined) set.material = fields.material
+  if (fields.shade !== undefined) set.shade = fields.shade
   if (fields.scannerBrand !== undefined) set.scannerBrand = fields.scannerBrand
   if (fields.specialInstructions !== undefined) set.specialInstructions = fields.specialInstructions
   if (fields.shipToAddress !== undefined) set.shipToAddress = fields.shipToAddress

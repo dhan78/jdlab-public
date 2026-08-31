@@ -1,0 +1,19 @@
+[project]
+name = "jdlab-lab-agent"
+version = "0.1.0"
+description = "On-prem bridge: pulls approved manufacturing jobs from the portal API (no AWS creds) into a CAM/slicer hot folder on the lab LAN, watches DONE/ERROR, and reports status back."
+requires-python = ">=3.9"
+# No third-party runtime dependencies — talks to the portal over stdlib urllib.
+dependencies = []
+
+[project.optional-dependencies]
+# python-dotenv: load a local .env in dev. pyinstaller: only if a locked-down
+# lab PC needs a single self-contained .exe instead of a Python install.
+dev = ["python-dotenv>=1.0", "pyinstaller>=6.0"]
+
+[project.scripts]
+jdlab-lab-agent = "lab_agent.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
