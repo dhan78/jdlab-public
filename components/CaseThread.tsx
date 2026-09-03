@@ -70,6 +70,16 @@ interface Message {
   authorName: string
   authorRole: Role
   body: string
+  kind?: string // 'user' | 'annotation'
+  meta?: {
+    attachmentId?: string | null
+    previewKey?: string | null
+    modelName?: string
+    annotationIds?: string[]
+    notes?: string[]
+    count?: number
+    kind?: string
+  } | null
   attachments: Attachment[]
   createdAt: string
 }
@@ -531,6 +541,81 @@ export default function CaseThread({
     void loadAnnotations()
   }, [loadAnnotations])
 
+  // --- Annotation activity batching (client-session summary) ----------------
+  // Buffer pins/measurements the author adds to a model, then post ONE thread
+  // "activity" entry per model after a short idle (or on unmount / case switch),
+  // so a review burst becomes a single deep-linkable entry, not N chat messages.
+  const pendingActivityRef = useRef<
+    Map<string, { attachmentId: string | null; previewKey: string | null; modelName: string; ids: string[]; notes: string[]; kinds: Set<string> }>
+  >(new Map())
+  const activityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const flushActivity = useCallback(async (unmount = false) => {
+    const buf = pendingActivityRef.current
+    if (buf.size === 0) return
+    const entries = [...buf.values()]
+    buf.clear()
+    if (activityTimerRef.current) { clearTimeout(activityTimerRef.current); activityTimerRef.current = null }
+    for (const e of entries) {
+      const kind = e.kinds.size > 1 ? 'mixed' : (e.kinds.values().next().value ?? 'pin')
+      try {
+        const res = await fetch(`/api/portal/cases/${caseId}/annotation-activity`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          keepalive: true, // let the POST finish even if the tab/route is leaving
+          body: JSON.stringify({
+            attachmentId: e.attachmentId,
+            previewKey: e.previewKey,
+            modelName: e.modelName,
+            annotationIds: e.ids,
+            notes: e.notes,
+            kind,
+          }),
+        })
+        if (!unmount && res.ok) {
+          const data = await res.json()
+          if (data.message) {
+            setMessages(prev => (prev.some(x => x.id === data.message.id) ? prev : [...prev, data.message]))
+          }
+        }
+      } catch {
+        // Best-effort: the pins persist regardless; only the summary is skipped.
+      }
+    }
+  }, [caseId])
+
+  const queueActivity = useCallback(
+    (
+      target: { attachmentId?: string | null; previewKey?: string | null },
+      modelName: string,
+      annId: string,
+      kind: string,
+      note: string
+    ) => {
+      const key = target.attachmentId ? `a:${target.attachmentId}` : `p:${target.previewKey}`
+      const buf = pendingActivityRef.current
+      const cur =
+        buf.get(key) ?? {
+          attachmentId: target.attachmentId ?? null,
+          previewKey: target.previewKey ?? null,
+          modelName,
+          ids: [] as string[],
+          notes: [] as string[],
+          kinds: new Set<string>(),
+        }
+      cur.ids.push(annId)
+      if (note.trim()) cur.notes.push(note.trim())
+      cur.kinds.add(kind)
+      buf.set(key, cur)
+      if (activityTimerRef.current) clearTimeout(activityTimerRef.current)
+      activityTimerRef.current = setTimeout(() => { void flushActivity(false) }, 12_000)
+    },
+    [flushActivity]
+  )
+
+  // Flush any buffered activity when the thread unmounts or the case switches.
+  useEffect(() => () => { void flushActivity(true) }, [flushActivity])
+
   // Create a pin on a specific model attachment at a picked surface point.
   const createAnnotation = useCallback(
     async (
@@ -538,7 +623,8 @@ export default function CaseThread({
       p: {
         x: number; y: number; z: number; body: string
         kind?: string; bx?: number; by?: number; bz?: number
-      }
+      },
+      modelName = 'the scan'
     ) => {
       try {
         const res = await fetch(`/api/portal/cases/${caseId}/annotations`, {
@@ -548,7 +634,10 @@ export default function CaseThread({
         })
         if (res.ok) {
           const data = await res.json()
-          if (data.annotation) setAnnotations(prev => [...prev, data.annotation])
+          if (data.annotation) {
+            setAnnotations(prev => [...prev, data.annotation])
+            queueActivity({ attachmentId }, modelName, data.annotation.id, data.annotation.kind ?? p.kind ?? 'pin', p.body)
+          }
           // PHI-safe: kind + note LENGTH only, never the note text.
           track('annotation_add', { caseId, kind: p.kind ?? 'pin', len: p.body.length })
         } else {
@@ -558,7 +647,7 @@ export default function CaseThread({
         reportClientError('annotation_create', caseId, e instanceof Error ? e.message : 'create failed')
       }
     },
-    [caseId]
+    [caseId, queueActivity]
   )
 
   // Create a pin on a GLB preview (anchored by its S3 key, not an attachment id).
@@ -568,7 +657,8 @@ export default function CaseThread({
       p: {
         x: number; y: number; z: number; body: string
         kind?: string; bx?: number; by?: number; bz?: number
-      }
+      },
+      modelName = 'the scan'
     ) => {
       try {
         const res = await fetch(`/api/portal/cases/${caseId}/annotations`, {
@@ -578,7 +668,10 @@ export default function CaseThread({
         })
         if (res.ok) {
           const data = await res.json()
-          if (data.annotation) setAnnotations(prev => [...prev, data.annotation])
+          if (data.annotation) {
+            setAnnotations(prev => [...prev, data.annotation])
+            queueActivity({ previewKey }, modelName, data.annotation.id, data.annotation.kind ?? p.kind ?? 'pin', p.body)
+          }
           track('annotation_add', { caseId, kind: p.kind ?? 'pin', len: p.body.length })
         } else {
           reportClientError('annotation_create', caseId, `status ${res.status}`, { status: res.status })
@@ -587,7 +680,7 @@ export default function CaseThread({
         reportClientError('annotation_create', caseId, e instanceof Error ? e.message : 'create failed')
       }
     },
-    [caseId]
+    [caseId, queueActivity]
   )
 
   // Delete a pin (author-only, or admin — enforced server-side).
@@ -604,6 +697,25 @@ export default function CaseThread({
       }
     },
     [caseId]
+  )
+
+  // "View on scan" deep-link: open the model an annotation-activity entry points
+  // at (attachment or GLB preview), maximized so its pins are visible.
+  const openAnnotationTarget = useCallback(
+    (meta: Message['meta']) => {
+      if (!meta) return
+      if (meta.attachmentId) {
+        for (const m of messages) {
+          const att = m.attachments.find(a => a.id === meta.attachmentId)
+          if (att) { setMaximized(att); return }
+        }
+      }
+      if (meta.previewKey) {
+        const pv = glbPreviews.find(p => p.id === meta.previewKey)
+        if (pv) setMaximizedPreview(pv)
+      }
+    },
+    [messages, glbPreviews]
   )
 
   // Realtime "typing" indicator for the other participant.
@@ -1299,7 +1411,7 @@ export default function CaseThread({
                       className="h-full w-full"
                       viewKey={`${caseId}:glb:${p.id}`}
                       annotations={annotations.filter(an => an.previewKey === p.id)}
-                      onCreateAnnotation={pt => createPreviewAnnotation(p.id, pt)}
+                      onCreateAnnotation={pt => createPreviewAnnotation(p.id, pt, displayName(p.name))}
                       onDeleteAnnotation={deleteAnnotation}
                       onLoad={source => track('scan_view', { caseId, ext: 'glb', size: p.size, source })}
                       onRotate={() => track('scan_rotate', { caseId, ext: 'glb', size: p.size })}
@@ -1336,6 +1448,47 @@ export default function CaseThread({
             </p>
           )}
           {messages.map(m => {
+            // System "annotation activity" entry — a light, deep-linkable row,
+            // not a chat bubble, so a review burst doesn't flood the thread.
+            if (m.kind === 'annotation') {
+              return (
+                <div key={m.id} className="flex justify-center">
+                  <div className="inline-flex max-w-[92%] items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-500">
+                    <svg className="h-3.5 w-3.5 flex-shrink-0 text-secondary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M12 21s7-5.686 7-11a7 7 0 1 0-14 0c0 5.314 7 11 7 11Z" /><circle cx="12" cy="10" r="2.5" /></svg>
+                    <span className="min-w-0">
+                      <span className="font-medium text-slate-600">{m.authorName}</span>{' '}
+                      {(() => {
+                        const meta = m.meta
+                        const notes = meta?.notes ?? []
+                        const count = meta?.count ?? (notes.length || 1)
+                        const noun = meta?.kind === 'measure' ? 'measurement' : meta?.kind === 'mixed' ? 'annotation' : 'pin'
+                        const label = count === 1 ? noun : `${noun}s`
+                        const model = meta?.modelName ?? 'the scan'
+                        if (notes.length === 0) return <>added {count} {label} to {model}</>
+                        if (notes.length === 1)
+                          return <>added a {noun} to {model}: <span className="italic text-slate-600">“{notes[0]}”</span></>
+                        return (
+                          <>
+                            added {count} {label} to {model}: <span className="italic text-slate-600">“{notes[0]}”</span>{' '}
+                            <span className="text-slate-400">+{notes.length - 1} more</span>
+                          </>
+                        )
+                      })()}
+                    </span>
+                    {(m.meta?.attachmentId || m.meta?.previewKey) && (
+                      <button
+                        type="button"
+                        data-intent="annotation_view_on_scan"
+                        onClick={() => openAnnotationTarget(m.meta)}
+                        className="flex-shrink-0 font-medium text-primary hover:underline"
+                      >
+                        View on scan
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            }
             const mine = m.authorId === currentUserId
             return (
               <div key={m.id} className={`flex gap-3 ${mine ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -1383,7 +1536,7 @@ export default function CaseThread({
                                 className="h-full w-full"
                                 viewKey={`${caseId}:${a.id}`}
                                 annotations={annotations.filter(an => an.attachmentId === a.id)}
-                                onCreateAnnotation={p => createAnnotation(a.id, p)}
+                                onCreateAnnotation={p => createAnnotation(a.id, p, displayName(a.name))}
                                 onDeleteAnnotation={deleteAnnotation}
                                 onLoad={source => track('scan_view', { caseId, ext: a.name.split('.').pop()?.toLowerCase(), size: a.size, source })}
                                 onRotate={() => track('scan_rotate', { caseId, ext: a.name.split('.').pop()?.toLowerCase(), size: a.size })}
@@ -1576,7 +1729,7 @@ export default function CaseThread({
                   className="h-full w-full"
                   viewKey={`${caseId}:${maximized.id}`}
                   annotations={annotations.filter(an => an.attachmentId === maximized.id)}
-                  onCreateAnnotation={p => createAnnotation(maximized.id, p)}
+                  onCreateAnnotation={p => createAnnotation(maximized.id, p, displayName(maximized.name))}
                   onDeleteAnnotation={deleteAnnotation}
                   onLoad={source => track('scan_view', { caseId, ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true, source })}
                   onRotate={() => track('scan_rotate', { caseId, ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true })}
@@ -1616,7 +1769,7 @@ export default function CaseThread({
                 className="h-full w-full"
                 viewKey={`${caseId}:glb:${maximizedPreview.id}`}
                 annotations={annotations.filter(an => an.previewKey === maximizedPreview.id)}
-                onCreateAnnotation={p => createPreviewAnnotation(maximizedPreview.id, p)}
+                onCreateAnnotation={p => createPreviewAnnotation(maximizedPreview.id, p, displayName(maximizedPreview.name))}
                 onDeleteAnnotation={deleteAnnotation}
                 onLoad={source => track('scan_view', { caseId, ext: 'glb', size: maximizedPreview.size, maximized: true, source })}
                 onRotate={() => track('scan_rotate', { caseId, ext: 'glb', size: maximizedPreview.size, maximized: true })}

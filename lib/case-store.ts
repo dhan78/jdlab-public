@@ -30,8 +30,32 @@ export interface CaseMessage {
   authorName: string
   authorRole: 'doctor' | 'planner' | 'admin'
   body: string
+  kind: string // 'user' | 'annotation'
+  meta: AnnotationActivityMeta | null
   attachments: CaseAttachment[]
   createdAt: string
+}
+
+// Deep-link target for a 'annotation' activity entry — points the thread's
+// "View on scan" link at the exact model + pins it summarizes.
+export interface AnnotationActivityMeta {
+  attachmentId?: string | null
+  previewKey?: string | null
+  modelName?: string
+  annotationIds?: string[]
+  notes?: string[]
+  count?: number
+  kind?: string // 'pin' | 'measure' | 'mixed'
+}
+
+function parseActivityMeta(raw: string | null): AnnotationActivityMeta | null {
+  if (!raw) return null
+  try {
+    const v = JSON.parse(raw)
+    return v && typeof v === 'object' ? (v as AnnotationActivityMeta) : null
+  } catch {
+    return null
+  }
 }
 
 export interface Case {
@@ -341,6 +365,8 @@ export async function listMessagesForCase(caseId: string): Promise<CaseMessage[]
     authorName: m.authorName,
     authorRole: m.authorRole as CaseMessage['authorRole'],
     body: m.body,
+    kind: m.kind ?? 'user',
+    meta: parseActivityMeta(m.meta ?? null),
     attachments: byMessage.get(m.id) ?? [],
     createdAt: m.createdAt.toISOString(),
   }))
@@ -695,6 +721,8 @@ export async function addMessage(input: {
   authorName: string
   authorRole: 'doctor' | 'planner' | 'admin'
   body: string
+  kind?: string
+  meta?: AnnotationActivityMeta | null
   attachments: Array<{ name: string; mimeType: string; size: number; dataUrl?: string; storageKey?: string }>
 }): Promise<CaseMessage> {
   const caseId = decodeCaseId(input.caseId)
@@ -715,6 +743,8 @@ export async function addMessage(input: {
       authorName: input.authorName,
       authorRole: input.authorRole,
       body: input.body,
+      kind: input.kind ?? 'user',
+      meta: input.meta ? JSON.stringify(input.meta) : null,
     })
     .returning()
 
@@ -755,6 +785,8 @@ export async function addMessage(input: {
     authorName: msg.authorName,
     authorRole: msg.authorRole as CaseMessage['authorRole'],
     body: msg.body,
+    kind: msg.kind ?? 'user',
+    meta: parseActivityMeta(msg.meta ?? null),
     attachments,
     createdAt: msg.createdAt.toISOString(),
   }

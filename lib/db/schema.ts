@@ -95,6 +95,12 @@ export const caseMessages = pgTable(
     authorName: text('author_name').notNull(),
     authorRole: text('author_role').notNull(),
     body: text('body').notNull().default(''),
+    // 'user' for a normal chat message; 'annotation' for a system activity entry
+    // that summarizes pins/measurements added to a model (carries a deep-link
+    // target in `meta`). Default keeps every existing row a plain message.
+    kind: text('kind').notNull().default('user'),
+    // JSON blob for non-'user' kinds (e.g. annotation deep-link target). Nullable.
+    meta: text('meta'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   t => ({
