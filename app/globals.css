@@ -123,3 +123,35 @@
   transform-style: preserve-3d;
   will-change: transform, opacity;
 }
+
+/* Scrollbar that only shows its thumb on hover. The gutter is reserved at all
+   times (transparent thumb) so revealing it on hover never shifts content. */
+.scroll-hover {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.scroll-hover:hover,
+.scroll-hover:focus-within {
+  scrollbar-color: rgb(203 213 225) transparent; /* slate-300 */
+}
+.scroll-hover::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-hover::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-hover::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  transition: background-color 0.2s;
+}
+.scroll-hover:hover::-webkit-scrollbar-thumb,
+.scroll-hover:focus-within::-webkit-scrollbar-thumb {
+  background-color: rgb(203 213 225); /* slate-300 */
+}
+.scroll-hover:hover::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(148 163 184); /* slate-400 while dragging */
+}

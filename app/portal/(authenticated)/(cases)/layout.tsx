@@ -15,8 +15,8 @@ export default function CasesLayout({
   children: React.ReactNode
 }) {
   return (
-    <section className="px-4 sm:px-6 lg:px-6 pt-2 pb-16">
-      <div className="mx-auto w-full max-w-[2160px]">
+    <section className="h-full px-4 sm:px-6 lg:px-6 pt-2 pb-4">
+      <div className="mx-auto h-full w-full max-w-[2160px]">
         <MobileRecentDrawer />
         <CasesShell>{children}</CasesShell>
       </div>

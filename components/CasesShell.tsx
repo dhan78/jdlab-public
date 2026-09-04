@@ -75,7 +75,7 @@ export default function CasesShell({ children }: { children: React.ReactNode }) 
   // Defer one tick until the viewport is known, so the detail pane mounts exactly
   // once (in the correct layout) instead of desktop-then-mobile.
   if (isDesktop === null) {
-    return <div className="h-[calc(100vh-5rem)]" aria-hidden />
+    return <div className="h-full" aria-hidden />
   }
 
   if (!isDesktop) {
@@ -83,7 +83,7 @@ export default function CasesShell({ children }: { children: React.ReactNode }) 
   }
 
   return (
-    <div className="flex items-stretch gap-3 h-[calc(100vh-5rem)] overflow-hidden">
+    <div className="flex items-stretch gap-3 h-full overflow-hidden">
       {/* Left area: the hamburger lives here (Gmail-style). When open, the
           recently-viewed list sits beneath it; when collapsed only it remains. */}
       <div className={`flex shrink-0 flex-col min-h-0 ${railOpen ? 'w-60' : 'w-9'}`}>
@@ -101,7 +101,7 @@ export default function CasesShell({ children }: { children: React.ReactNode }) 
           </svg>
         </button>
         {railOpen && (
-          <div className="min-h-0 flex-1 overflow-y-auto pb-4">
+          <div className="scroll-hover min-h-0 flex-1 overflow-y-auto pb-4">
             <CaseSidebar />
           </div>
         )}
@@ -115,7 +115,7 @@ export default function CasesShell({ children }: { children: React.ReactNode }) 
           className="h-full"
         >
           <Panel id="list" order={1} defaultSize={44} minSize={30} className="relative min-w-0">
-            <div className="absolute inset-0 overflow-y-auto overflow-x-clip px-4 pb-4">
+            <div className="scroll-hover absolute inset-0 overflow-y-auto overflow-x-clip px-4 pb-4">
               <CaseList />
             </div>
           </Panel>
@@ -135,7 +135,7 @@ export default function CasesShell({ children }: { children: React.ReactNode }) 
           </PanelResizeHandle>
 
           <Panel id="detail" order={2} defaultSize={56} minSize={35} className="relative min-w-0">
-            <div className="absolute inset-0 overflow-y-auto px-4 pb-4">{children}</div>
+            <div className="scroll-hover absolute inset-0 overflow-y-auto px-4 pb-4">{children}</div>
           </Panel>
         </PanelGroup>
       </div>

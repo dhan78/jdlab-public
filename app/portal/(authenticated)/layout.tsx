@@ -2,7 +2,6 @@ import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { verifySessionToken } from '@/lib/portal-auth'
 import PortalHeader from '@/components/PortalHeader'
-import Footer from '@/components/Footer'
 import TelemetryProvider from '@/components/TelemetryProvider'
 
 export default async function PortalAuthenticatedLayout({
@@ -23,13 +22,12 @@ export default async function PortalAuthenticatedLayout({
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="h-dvh flex flex-col overflow-hidden">
       <TelemetryProvider />
       <PortalHeader name={session.name} email={session.email} role={session.role} />
-      <main className="flex-1 bg-slate-50">
+      <main className="flex-1 min-h-0 overflow-y-auto bg-slate-50">
         {children}
       </main>
-      <Footer />
     </div>
   )
 }

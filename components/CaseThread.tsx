@@ -651,7 +651,11 @@ export default function CaseThread({
       try {
         const res = await fetch(`/api/portal/cases/${caseId}/annotations/${annId}`, { method: 'DELETE' })
         if (res.ok) {
+          const data = await res.json().catch(() => ({}))
           setAnnotations(prev => prev.filter(a => a.id !== annId))
+          // Also drop the pin's activity entry from the thread (server removed it).
+          const removedIds: string[] = Array.isArray(data.removedMessageIds) ? data.removedMessageIds : []
+          if (removedIds.length) setMessages(prev => prev.filter(m => !removedIds.includes(m.id)))
           track('annotation_remove', { caseId })
         } else reportClientError('annotation_delete', caseId, `status ${res.status}`, { status: res.status })
       } catch (e) {

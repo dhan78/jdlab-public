@@ -715,6 +715,26 @@ export async function deleteCaseAnnotation(
   return removed.length > 0
 }
 
+// Remove the annotation-activity thread entries that reference a pin, so the
+// thread reflects only live pins. Called when a pin is deleted (a reposition is
+// delete + re-pin, which nets to one current entry). Returns the removed ids.
+export async function deleteAnnotationActivityFor(
+  caseId: string,
+  annotationId: string
+): Promise<string[]> {
+  const cid = decodeCaseId(caseId)
+  if (cid < 0) return []
+  const rows = await db
+    .select({ id: caseMessages.id, meta: caseMessages.meta })
+    .from(caseMessages)
+    .where(and(eq(caseMessages.caseId, cid), eq(caseMessages.kind, 'annotation')))
+  const ids = rows
+    .filter(r => parseActivityMeta(r.meta ?? null)?.annotationIds?.includes(annotationId))
+    .map(r => r.id)
+  if (ids.length) await db.delete(caseMessages).where(inArray(caseMessages.id, ids))
+  return ids
+}
+
 export async function addMessage(input: {
   caseId: string
   authorId: string | null
@@ -727,12 +747,18 @@ export async function addMessage(input: {
 }): Promise<CaseMessage> {
   const caseId = decodeCaseId(input.caseId)
 
-  // Per-case sequence -> message id "{caseId}-{n}".
-  const [{ n }] = await db
-    .select({ n: sql<number>`count(*)::int` })
+  // Per-case message id "{caseId}-{n}", using MAX(suffix)+1 (not count) so ids
+  // stay unique even after a message is deleted — annotation-activity entries
+  // are removed when their pin is deleted.
+  const existing = await db
+    .select({ id: caseMessages.id })
     .from(caseMessages)
     .where(eq(caseMessages.caseId, caseId))
-  const messageId = `${caseId}-${(n ?? 0) + 1}`
+  const maxN = existing.reduce((mx, r) => {
+    const suffix = parseInt(r.id.slice(r.id.lastIndexOf('-') + 1), 10)
+    return Number.isFinite(suffix) && suffix > mx ? suffix : mx
+  }, 0)
+  const messageId = `${caseId}-${maxN + 1}`
 
   const [msg] = await db
     .insert(caseMessages)

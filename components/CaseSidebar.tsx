@@ -1,7 +1,6 @@
 'use client'
 
 import { Fragment, useState, useEffect, useCallback } from 'react'
-import { flushSync } from 'react-dom'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { track } from '@/lib/telemetry'
@@ -114,18 +113,9 @@ export default function CaseSidebar({
       const res = await fetch('/api/portal/cases')
       if (res.ok) {
         const data = await res.json()
-        // Commit the new data inside a View Transition where supported so the
-        // recency reorder (a just-opened case sliding to the top) animates
-        // smoothly instead of snapping; instant fallback elsewhere.
-        const commit = () =>
-          flushSync(() => {
-            setFetched(data.cases ?? [])
-            setRole(data.role ?? 'doctor')
-            setSlaConfig(data.slaConfig ?? {})
-          })
-        const doc = document as Document & { startViewTransition?: (cb: () => void) => void }
-        if (typeof document !== 'undefined' && doc.startViewTransition) doc.startViewTransition(commit)
-        else commit()
+        setFetched(data.cases ?? [])
+        setRole(data.role ?? 'doctor')
+        setSlaConfig(data.slaConfig ?? {})
       } else {
         setFetched([])
       }
@@ -236,7 +226,7 @@ export default function CaseSidebar({
                     Recently viewed
                   </li>
                 )}
-                <li className="relative group/row" style={{ viewTransitionName: `sb-${c.id}` }}>
+                <li className="relative group/row">
                   <Link
                     href={`/portal/cases/${c.id}`}
                     onClick={() => track('case_open', { caseId: c.id, from: 'recent' })}
