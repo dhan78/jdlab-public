@@ -1,6 +1,7 @@
 'use client'
 
 import { Fragment, useState, useEffect, useCallback } from 'react'
+import { flushSync } from 'react-dom'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { track } from '@/lib/telemetry'
@@ -113,9 +114,18 @@ export default function CaseSidebar({
       const res = await fetch('/api/portal/cases')
       if (res.ok) {
         const data = await res.json()
-        setFetched(data.cases ?? [])
-        setRole(data.role ?? 'doctor')
-        setSlaConfig(data.slaConfig ?? {})
+        // Commit the new data inside a View Transition where supported so the
+        // recency reorder (a just-opened case sliding to the top) animates
+        // smoothly instead of snapping; instant fallback elsewhere.
+        const commit = () =>
+          flushSync(() => {
+            setFetched(data.cases ?? [])
+            setRole(data.role ?? 'doctor')
+            setSlaConfig(data.slaConfig ?? {})
+          })
+        const doc = document as Document & { startViewTransition?: (cb: () => void) => void }
+        if (typeof document !== 'undefined' && doc.startViewTransition) doc.startViewTransition(commit)
+        else commit()
       } else {
         setFetched([])
       }
@@ -169,7 +179,10 @@ export default function CaseSidebar({
     .sort((a, b) => (a.pinnedAt ?? '').localeCompare(b.pinnedAt ?? ''))
   const recentCases = cases.filter(c => !c.pinned).sort(byRecency).slice(0, 10)
   const recent = [...pinnedCases, ...recentCases]
-  const isLoading = provided ? false : loading
+  // Only show the "Loading…" placeholder on the FIRST load (no data yet). On
+  // refetches (e.g. a case open fires `cases:changed`) keep the current list on
+  // screen and swap in fresh data — otherwise the list flickers on every click.
+  const isLoading = provided ? false : (loading && fetched === null)
 
   return (
     <aside className="self-start" aria-label="Recently viewed cases">
@@ -223,7 +236,7 @@ export default function CaseSidebar({
                     Recently viewed
                   </li>
                 )}
-                <li className="relative group/row">
+                <li className="relative group/row" style={{ viewTransitionName: `sb-${c.id}` }}>
                   <Link
                     href={`/portal/cases/${c.id}`}
                     onClick={() => track('case_open', { caseId: c.id, from: 'recent' })}

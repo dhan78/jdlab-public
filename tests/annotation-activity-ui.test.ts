@@ -22,14 +22,14 @@ describe('CaseThread annotation-activity wiring', () => {
     expect(thread).toContain('openAnnotationTarget(m.meta)')
   })
 
-  it('batches pins into one summary posted to the annotation-activity endpoint', () => {
+  it('posts an activity entry immediately per pin to the annotation-activity endpoint', () => {
     expect(thread).toContain('/annotation-activity')
-    expect(thread).toMatch(/setTimeout\(\(\) => \{ void flushActivity\(false\) \}, 12_000\)/)
+    expect(thread).toContain('void postActivity(')
+    expect(thread).toContain('annotationIds: [annotationId]')
   })
 
-  it('flushes buffered activity on unmount/case-switch with keepalive so it is not lost', () => {
-    expect(thread).toContain('keepalive: true')
-    expect(thread).toContain('void flushActivity(true)')
+  it('appends the returned activity message to the thread (deduped by id)', () => {
+    expect(thread).toMatch(/prev\.some\(x => x\.id === data\.message\.id\)/)
   })
 
   it('shows note text: single-pin inline and multi-pin "+N more"', () => {

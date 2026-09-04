@@ -541,80 +541,42 @@ export default function CaseThread({
     void loadAnnotations()
   }, [loadAnnotations])
 
-  // --- Annotation activity batching (client-session summary) ----------------
-  // Buffer pins/measurements the author adds to a model, then post ONE thread
-  // "activity" entry per model after a short idle (or on unmount / case switch),
-  // so a review burst becomes a single deep-linkable entry, not N chat messages.
-  const pendingActivityRef = useRef<
-    Map<string, { attachmentId: string | null; previewKey: string | null; modelName: string; ids: string[]; notes: string[]; kinds: Set<string> }>
-  >(new Map())
-  const activityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const flushActivity = useCallback(async (unmount = false) => {
-    const buf = pendingActivityRef.current
-    if (buf.size === 0) return
-    const entries = [...buf.values()]
-    buf.clear()
-    if (activityTimerRef.current) { clearTimeout(activityTimerRef.current); activityTimerRef.current = null }
-    for (const e of entries) {
-      const kind = e.kinds.size > 1 ? 'mixed' : (e.kinds.values().next().value ?? 'pin')
+  // Post a thread "annotation activity" entry immediately for each pin/measurement
+  // the author adds — one deep-linkable entry per pin, appended to the thread the
+  // moment the pin persists. No buffering/debounce, so nothing is lost to a remount.
+  const postActivity = useCallback(
+    async (
+      target: { attachmentId?: string | null; previewKey?: string | null },
+      modelName: string,
+      annotationId: string,
+      kind: string,
+      note: string
+    ) => {
       try {
         const res = await fetch(`/api/portal/cases/${caseId}/annotation-activity`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          keepalive: true, // let the POST finish even if the tab/route is leaving
           body: JSON.stringify({
-            attachmentId: e.attachmentId,
-            previewKey: e.previewKey,
-            modelName: e.modelName,
-            annotationIds: e.ids,
-            notes: e.notes,
+            attachmentId: target.attachmentId ?? null,
+            previewKey: target.previewKey ?? null,
+            modelName,
+            annotationIds: [annotationId],
+            notes: note.trim() ? [note.trim()] : [],
             kind,
           }),
         })
-        if (!unmount && res.ok) {
+        if (res.ok) {
           const data = await res.json()
           if (data.message) {
             setMessages(prev => (prev.some(x => x.id === data.message.id) ? prev : [...prev, data.message]))
           }
         }
       } catch {
-        // Best-effort: the pins persist regardless; only the summary is skipped.
+        // Best-effort: the pin persists regardless; only the thread entry is skipped.
       }
-    }
-  }, [caseId])
-
-  const queueActivity = useCallback(
-    (
-      target: { attachmentId?: string | null; previewKey?: string | null },
-      modelName: string,
-      annId: string,
-      kind: string,
-      note: string
-    ) => {
-      const key = target.attachmentId ? `a:${target.attachmentId}` : `p:${target.previewKey}`
-      const buf = pendingActivityRef.current
-      const cur =
-        buf.get(key) ?? {
-          attachmentId: target.attachmentId ?? null,
-          previewKey: target.previewKey ?? null,
-          modelName,
-          ids: [] as string[],
-          notes: [] as string[],
-          kinds: new Set<string>(),
-        }
-      cur.ids.push(annId)
-      if (note.trim()) cur.notes.push(note.trim())
-      cur.kinds.add(kind)
-      buf.set(key, cur)
-      if (activityTimerRef.current) clearTimeout(activityTimerRef.current)
-      activityTimerRef.current = setTimeout(() => { void flushActivity(false) }, 12_000)
     },
-    [flushActivity]
+    [caseId]
   )
-
-  // Flush any buffered activity when the thread unmounts or the case switches.
-  useEffect(() => () => { void flushActivity(true) }, [flushActivity])
 
   // Create a pin on a specific model attachment at a picked surface point.
   const createAnnotation = useCallback(
@@ -636,7 +598,7 @@ export default function CaseThread({
           const data = await res.json()
           if (data.annotation) {
             setAnnotations(prev => [...prev, data.annotation])
-            queueActivity({ attachmentId }, modelName, data.annotation.id, data.annotation.kind ?? p.kind ?? 'pin', p.body)
+            void postActivity({ attachmentId }, modelName, data.annotation.id, data.annotation.kind ?? p.kind ?? 'pin', p.body)
           }
           // PHI-safe: kind + note LENGTH only, never the note text.
           track('annotation_add', { caseId, kind: p.kind ?? 'pin', len: p.body.length })
@@ -647,7 +609,7 @@ export default function CaseThread({
         reportClientError('annotation_create', caseId, e instanceof Error ? e.message : 'create failed')
       }
     },
-    [caseId, queueActivity]
+    [caseId, postActivity]
   )
 
   // Create a pin on a GLB preview (anchored by its S3 key, not an attachment id).
@@ -670,7 +632,7 @@ export default function CaseThread({
           const data = await res.json()
           if (data.annotation) {
             setAnnotations(prev => [...prev, data.annotation])
-            queueActivity({ previewKey }, modelName, data.annotation.id, data.annotation.kind ?? p.kind ?? 'pin', p.body)
+            void postActivity({ previewKey }, modelName, data.annotation.id, data.annotation.kind ?? p.kind ?? 'pin', p.body)
           }
           track('annotation_add', { caseId, kind: p.kind ?? 'pin', len: p.body.length })
         } else {
@@ -680,7 +642,7 @@ export default function CaseThread({
         reportClientError('annotation_create', caseId, e instanceof Error ? e.message : 'create failed')
       }
     },
-    [caseId, queueActivity]
+    [caseId, postActivity]
   )
 
   // Delete a pin (author-only, or admin — enforced server-side).
@@ -1746,6 +1708,7 @@ export default function CaseThread({
             </div>
             {/* Chrome in a separate top compositing layer (z-70) so the WebGL canvas can't cover it on mobile */}
             <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] flex touch-none items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+              <span className="pointer-events-none min-w-0 flex-1 truncate text-sm font-medium text-slate-100 drop-shadow">{maximized.name}</span>
               <button
                 type="button"
                 data-intent="viewer_close"
@@ -1755,7 +1718,6 @@ export default function CaseThread({
                 <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
                 Close
               </button>
-              <span className="pointer-events-none min-w-0 flex-1 truncate text-sm font-medium text-slate-100 drop-shadow">{maximized.name}</span>
             </div>
           </>,
           document.body
@@ -1778,6 +1740,7 @@ export default function CaseThread({
             </div>
             {/* Chrome in a separate top compositing layer (z-70) so the WebGL canvas can't cover it on mobile */}
             <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] flex touch-none items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+              <span className="pointer-events-none min-w-0 flex-1 truncate text-sm font-medium text-slate-100 drop-shadow">{displayName(maximizedPreview.name)}</span>
               <button
                 type="button"
                 data-intent="viewer_close"
@@ -1787,7 +1750,6 @@ export default function CaseThread({
                 <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
                 Close
               </button>
-              <span className="pointer-events-none min-w-0 flex-1 truncate text-sm font-medium text-slate-100 drop-shadow">{displayName(maximizedPreview.name)}</span>
             </div>
           </>,
           document.body
