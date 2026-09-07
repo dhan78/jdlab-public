@@ -715,7 +715,8 @@ export default function CaseList() {
 
   return (
     <div ref={listRootRef}>
-            {/* Sticky toolbar: title, scope/sort, and search/filters stay pinned while scrolling */}
+            {/* Sticky toolbar. Mobile scrolls the window, so offset by the sticky
+                64px header (top-16); desktop scrolls inside the pane (top-0). */}
             <div ref={stickyHeaderRef} className={`sticky top-16 lg:top-0 z-30 -mx-4 px-4 mb-3 bg-slate-50/90 backdrop-blur supports-[backdrop-filter]:bg-slate-50/75 transition-all duration-200 ${condensed ? 'py-2 shadow-sm border-b border-slate-200' : 'pt-0 pb-2'}`}>
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 {/* Kept for accessibility + document outline (role context:

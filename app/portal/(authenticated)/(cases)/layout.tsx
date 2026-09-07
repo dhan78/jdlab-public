@@ -15,8 +15,11 @@ export default function CasesLayout({
   children: React.ReactNode
 }) {
   return (
-    <section className="h-full px-4 sm:px-6 lg:px-6 pt-2 pb-4">
-      <div className="mx-auto h-full w-full max-w-[2160px]">
+    // h-full only on desktop: there the section fills the frame so the resizable
+    // panes scroll internally. On mobile the content flows in <main>'s own scroll,
+    // so forcing viewport height just leaves blank space past the thread/composer.
+    <section className="lg:h-full px-4 sm:px-6 lg:px-6 pt-2 pb-4">
+      <div className="mx-auto lg:h-full w-full max-w-[2160px]">
         <MobileRecentDrawer />
         <CasesShell>{children}</CasesShell>
       </div>

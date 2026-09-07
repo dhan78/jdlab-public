@@ -79,7 +79,9 @@ export default function CasesShell({ children }: { children: React.ReactNode }) 
   }
 
   if (!isDesktop) {
-    return <div className="min-w-0">{caseOpen ? children : <CaseList />}</div>
+    // overflow-x-clip: decorative animate-ping rings (unread button) scale past
+    // the viewport and would otherwise flash a horizontal scrollbar on <main>.
+    return <div className="min-w-0 overflow-x-clip">{caseOpen ? children : <CaseList />}</div>
   }
 
   return (
