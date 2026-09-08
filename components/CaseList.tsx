@@ -327,6 +327,9 @@ export default function CaseList() {
   // Scroll target captured during hydration (see the hydrate effect below).
   const pendingScrollRef = useRef(0)
   const scrollRestoredRef = useRef(false)
+  // Root of the list content; used to clamp the restore so it can never scroll
+  // past the list into the page footer.
+  const listRootRef = useRef<HTMLDivElement>(null)
   // Reapply the saved scroll once the list has re-rendered with data (loading
   // flips false), at most once per mount so live SSE refetches — which keep
   // loading false — never yank the viewport. Mobile only.
@@ -334,7 +337,15 @@ export default function CaseList() {
     if (loading || scrollRestoredRef.current) return
     scrollRestoredRef.current = true
     const y = pendingScrollRef.current
-    if (y > 0 && window.matchMedia('(max-width: 1023px)').matches) window.scrollTo(0, y)
+    if (y > 0 && window.matchMedia('(max-width: 1023px)').matches) {
+      // Never restore into the footer: cap at the list's own bottom minus the
+      // viewport, so the footer (which sits below the list) stays off-screen.
+      const el = listRootRef.current
+      const maxY = el
+        ? Math.max(0, el.getBoundingClientRect().bottom + window.scrollY - window.innerHeight)
+        : y
+      window.scrollTo(0, Math.min(y, maxY))
+    }
   }, [loading])
 
   // Live clock so SLA chips recompute on their own as time passes (e.g. "due
@@ -703,8 +714,9 @@ export default function CaseList() {
   }
 
   return (
-    <div>
-            {/* Sticky toolbar: title, scope/sort, and search/filters stay pinned while scrolling */}
+    <div ref={listRootRef}>
+            {/* Sticky toolbar. Mobile scrolls the window, so offset by the sticky
+                64px header (top-16); desktop scrolls inside the pane (top-0). */}
             <div ref={stickyHeaderRef} className={`sticky top-16 lg:top-0 z-30 -mx-4 px-4 mb-3 bg-slate-50/90 backdrop-blur supports-[backdrop-filter]:bg-slate-50/75 transition-all duration-200 ${condensed ? 'py-2 shadow-sm border-b border-slate-200' : 'pt-0 pb-2'}`}>
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 {/* Kept for accessibility + document outline (role context:

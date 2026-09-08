@@ -30,8 +30,32 @@ export interface CaseMessage {
   authorName: string
   authorRole: 'doctor' | 'planner' | 'admin'
   body: string
+  kind: string // 'user' | 'annotation'
+  meta: AnnotationActivityMeta | null
   attachments: CaseAttachment[]
   createdAt: string
+}
+
+// Deep-link target for a 'annotation' activity entry — points the thread's
+// "View on scan" link at the exact model + pins it summarizes.
+export interface AnnotationActivityMeta {
+  attachmentId?: string | null
+  previewKey?: string | null
+  modelName?: string
+  annotationIds?: string[]
+  notes?: string[]
+  count?: number
+  kind?: string // 'pin' | 'measure' | 'mixed'
+}
+
+function parseActivityMeta(raw: string | null): AnnotationActivityMeta | null {
+  if (!raw) return null
+  try {
+    const v = JSON.parse(raw)
+    return v && typeof v === 'object' ? (v as AnnotationActivityMeta) : null
+  } catch {
+    return null
+  }
 }
 
 export interface Case {
@@ -341,6 +365,8 @@ export async function listMessagesForCase(caseId: string): Promise<CaseMessage[]
     authorName: m.authorName,
     authorRole: m.authorRole as CaseMessage['authorRole'],
     body: m.body,
+    kind: m.kind ?? 'user',
+    meta: parseActivityMeta(m.meta ?? null),
     attachments: byMessage.get(m.id) ?? [],
     createdAt: m.createdAt.toISOString(),
   }))
@@ -689,22 +715,50 @@ export async function deleteCaseAnnotation(
   return removed.length > 0
 }
 
+// Remove the annotation-activity thread entries that reference a pin, so the
+// thread reflects only live pins. Called when a pin is deleted (a reposition is
+// delete + re-pin, which nets to one current entry). Returns the removed ids.
+export async function deleteAnnotationActivityFor(
+  caseId: string,
+  annotationId: string
+): Promise<string[]> {
+  const cid = decodeCaseId(caseId)
+  if (cid < 0) return []
+  const rows = await db
+    .select({ id: caseMessages.id, meta: caseMessages.meta })
+    .from(caseMessages)
+    .where(and(eq(caseMessages.caseId, cid), eq(caseMessages.kind, 'annotation')))
+  const ids = rows
+    .filter(r => parseActivityMeta(r.meta ?? null)?.annotationIds?.includes(annotationId))
+    .map(r => r.id)
+  if (ids.length) await db.delete(caseMessages).where(inArray(caseMessages.id, ids))
+  return ids
+}
+
 export async function addMessage(input: {
   caseId: string
   authorId: string | null
   authorName: string
   authorRole: 'doctor' | 'planner' | 'admin'
   body: string
+  kind?: string
+  meta?: AnnotationActivityMeta | null
   attachments: Array<{ name: string; mimeType: string; size: number; dataUrl?: string; storageKey?: string }>
 }): Promise<CaseMessage> {
   const caseId = decodeCaseId(input.caseId)
 
-  // Per-case sequence -> message id "{caseId}-{n}".
-  const [{ n }] = await db
-    .select({ n: sql<number>`count(*)::int` })
+  // Per-case message id "{caseId}-{n}", using MAX(suffix)+1 (not count) so ids
+  // stay unique even after a message is deleted — annotation-activity entries
+  // are removed when their pin is deleted.
+  const existing = await db
+    .select({ id: caseMessages.id })
     .from(caseMessages)
     .where(eq(caseMessages.caseId, caseId))
-  const messageId = `${caseId}-${(n ?? 0) + 1}`
+  const maxN = existing.reduce((mx, r) => {
+    const suffix = parseInt(r.id.slice(r.id.lastIndexOf('-') + 1), 10)
+    return Number.isFinite(suffix) && suffix > mx ? suffix : mx
+  }, 0)
+  const messageId = `${caseId}-${maxN + 1}`
 
   const [msg] = await db
     .insert(caseMessages)
@@ -715,6 +769,8 @@ export async function addMessage(input: {
       authorName: input.authorName,
       authorRole: input.authorRole,
       body: input.body,
+      kind: input.kind ?? 'user',
+      meta: input.meta ? JSON.stringify(input.meta) : null,
     })
     .returning()
 
@@ -755,6 +811,8 @@ export async function addMessage(input: {
     authorName: msg.authorName,
     authorRole: msg.authorRole as CaseMessage['authorRole'],
     body: msg.body,
+    kind: msg.kind ?? 'user',
+    meta: parseActivityMeta(msg.meta ?? null),
     attachments,
     createdAt: msg.createdAt.toISOString(),
   }

@@ -17,6 +17,9 @@ import { fileURLToPath } from 'node:url'
 // The fix has two independent guarantees, both asserted below:
 //   1. The shell row is clamped with `overflow-hidden` so content can NEVER
 //      escape into the document past the footer, regardless of thread length.
+//      The viewport-height clamp itself now lives on the authenticated layout
+//      (app-shell: `h-dvh overflow-hidden`), and the shell fills it with
+//      `h-full` — asserted by the layout guard below.
 //   2. Each pane scrolls internally via `absolute inset-0 overflow-y-auto`
 //      (absolute fill works against the panel's *used* box and does not need
 //      percentage-height resolution), NOT the fragile `h-full`.
@@ -29,13 +32,27 @@ const shellSource = readFileSync(
   'utf8',
 )
 
+const layoutSource = readFileSync(
+  fileURLToPath(
+    new URL('../app/portal/(authenticated)/layout.tsx', import.meta.url),
+  ),
+  'utf8',
+)
+
 describe('CasesShell desktop layout invariants (whitespace-after-footer regression)', () => {
   it('clamps the fixed-height shell with overflow-hidden so nothing escapes past the footer', () => {
-    // The desktop master-detail container: fixed viewport-derived height AND
-    // overflow-hidden. Both must be present on the same element.
+    // The desktop master-detail container fills the locked app-shell (h-full)
+    // AND clamps overflow so content can never escape the page box.
     expect(shellSource).toMatch(
-      /className="flex items-stretch gap-3 h-\[calc\(100vh-5rem\)\][^"]*\boverflow-hidden\b/,
+      /className="flex items-stretch gap-3 h-full[^"]*\boverflow-hidden\b/,
     )
+  })
+
+  it('locks the app-shell at the layout so the page itself never scrolls', () => {
+    // The window/page must not scroll: the authenticated layout is a fixed-height
+    // shell (h-dvh + overflow-hidden) with a single internal scroll region (main).
+    expect(layoutSource).toMatch(/h-dvh[^"]*\boverflow-hidden\b/)
+    expect(layoutSource).toMatch(/<main[^>]*\bflex-1\b[^>]*\bmin-h-0\b[^>]*\boverflow-y-auto\b/)
   })
 
   it('scrolls each pane internally via absolute inset-0 (not h-full)', () => {

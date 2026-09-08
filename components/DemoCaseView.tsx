@@ -10,6 +10,8 @@
  */
 import { useState } from 'react'
 import dynamic from 'next/dynamic'
+import Link from 'next/link'
+import Logo from './Logo'
 import type { ScanAnnotation } from './ScanViewer'
 
 const ScanViewer = dynamic(() => import('./ScanViewer'), {
@@ -55,7 +57,14 @@ export default function DemoCaseView({
       {/* Demo banner */}
       <div className="bg-primary text-white">
         <div className="container-wide flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm">
-          <span className="font-medium">JD Dental Lab — live sample case</span>
+          <Link
+            href="/"
+            aria-label="JD Dental Lab — back to home"
+            className="flex items-center gap-2 font-medium transition hover:opacity-90"
+          >
+            <Logo className="h-8 w-auto rounded bg-white/95 p-1" />
+            <span>JD Dental Lab — live sample case</span>
+          </Link>
           <span className="text-white/80">Read-only preview · spin, zoom &amp; explore the 3D scan</span>
         </div>
       </div>
@@ -131,7 +140,7 @@ export default function DemoCaseView({
             in 3D, with the lab&apos;s margins and measurements marked right on the model.
           </p>
           <a
-            href="/#contact"
+            href="#request-pilot"
             className="btn-primary mt-4 inline-block"
           >
             Talk to us about your cases

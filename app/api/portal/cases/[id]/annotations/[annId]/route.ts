@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSessionFromCookies, verifySessionToken } from '@/lib/portal-auth'
 import type { SessionPayload } from '@/lib/portal-auth'
-import { findCaseById, deleteCaseAnnotation } from '@/lib/case-store'
+import { findCaseById, deleteCaseAnnotation, deleteAnnotationActivityFor } from '@/lib/case-store'
 
 export const runtime = 'nodejs'
 
@@ -38,5 +38,8 @@ export async function DELETE(
   if (!removed) {
     return NextResponse.json({ error: 'Annotation not found or not yours to delete' }, { status: 404 })
   }
-  return NextResponse.json({ deleted: true })
+  // Drop the matching thread activity entry so a deleted/repositioned pin
+  // doesn't leave a stale entry with a dead deep-link.
+  const removedMessageIds = await deleteAnnotationActivityFor(id, annId)
+  return NextResponse.json({ deleted: true, removedMessageIds })
 }

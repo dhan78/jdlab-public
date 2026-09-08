@@ -70,6 +70,16 @@ interface Message {
   authorName: string
   authorRole: Role
   body: string
+  kind?: string // 'user' | 'annotation'
+  meta?: {
+    attachmentId?: string | null
+    previewKey?: string | null
+    modelName?: string
+    annotationIds?: string[]
+    notes?: string[]
+    count?: number
+    kind?: string
+  } | null
   attachments: Attachment[]
   createdAt: string
 }
@@ -531,6 +541,43 @@ export default function CaseThread({
     void loadAnnotations()
   }, [loadAnnotations])
 
+  // Post a thread "annotation activity" entry immediately for each pin/measurement
+  // the author adds — one deep-linkable entry per pin, appended to the thread the
+  // moment the pin persists. No buffering/debounce, so nothing is lost to a remount.
+  const postActivity = useCallback(
+    async (
+      target: { attachmentId?: string | null; previewKey?: string | null },
+      modelName: string,
+      annotationId: string,
+      kind: string,
+      note: string
+    ) => {
+      try {
+        const res = await fetch(`/api/portal/cases/${caseId}/annotation-activity`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            attachmentId: target.attachmentId ?? null,
+            previewKey: target.previewKey ?? null,
+            modelName,
+            annotationIds: [annotationId],
+            notes: note.trim() ? [note.trim()] : [],
+            kind,
+          }),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          if (data.message) {
+            setMessages(prev => (prev.some(x => x.id === data.message.id) ? prev : [...prev, data.message]))
+          }
+        }
+      } catch {
+        // Best-effort: the pin persists regardless; only the thread entry is skipped.
+      }
+    },
+    [caseId]
+  )
+
   // Create a pin on a specific model attachment at a picked surface point.
   const createAnnotation = useCallback(
     async (
@@ -538,7 +585,8 @@ export default function CaseThread({
       p: {
         x: number; y: number; z: number; body: string
         kind?: string; bx?: number; by?: number; bz?: number
-      }
+      },
+      modelName = 'the scan'
     ) => {
       try {
         const res = await fetch(`/api/portal/cases/${caseId}/annotations`, {
@@ -548,7 +596,10 @@ export default function CaseThread({
         })
         if (res.ok) {
           const data = await res.json()
-          if (data.annotation) setAnnotations(prev => [...prev, data.annotation])
+          if (data.annotation) {
+            setAnnotations(prev => [...prev, data.annotation])
+            void postActivity({ attachmentId }, modelName, data.annotation.id, data.annotation.kind ?? p.kind ?? 'pin', p.body)
+          }
           // PHI-safe: kind + note LENGTH only, never the note text.
           track('annotation_add', { caseId, kind: p.kind ?? 'pin', len: p.body.length })
         } else {
@@ -558,7 +609,7 @@ export default function CaseThread({
         reportClientError('annotation_create', caseId, e instanceof Error ? e.message : 'create failed')
       }
     },
-    [caseId]
+    [caseId, postActivity]
   )
 
   // Create a pin on a GLB preview (anchored by its S3 key, not an attachment id).
@@ -568,7 +619,8 @@ export default function CaseThread({
       p: {
         x: number; y: number; z: number; body: string
         kind?: string; bx?: number; by?: number; bz?: number
-      }
+      },
+      modelName = 'the scan'
     ) => {
       try {
         const res = await fetch(`/api/portal/cases/${caseId}/annotations`, {
@@ -578,7 +630,10 @@ export default function CaseThread({
         })
         if (res.ok) {
           const data = await res.json()
-          if (data.annotation) setAnnotations(prev => [...prev, data.annotation])
+          if (data.annotation) {
+            setAnnotations(prev => [...prev, data.annotation])
+            void postActivity({ previewKey }, modelName, data.annotation.id, data.annotation.kind ?? p.kind ?? 'pin', p.body)
+          }
           track('annotation_add', { caseId, kind: p.kind ?? 'pin', len: p.body.length })
         } else {
           reportClientError('annotation_create', caseId, `status ${res.status}`, { status: res.status })
@@ -587,7 +642,7 @@ export default function CaseThread({
         reportClientError('annotation_create', caseId, e instanceof Error ? e.message : 'create failed')
       }
     },
-    [caseId]
+    [caseId, postActivity]
   )
 
   // Delete a pin (author-only, or admin — enforced server-side).
@@ -596,7 +651,11 @@ export default function CaseThread({
       try {
         const res = await fetch(`/api/portal/cases/${caseId}/annotations/${annId}`, { method: 'DELETE' })
         if (res.ok) {
+          const data = await res.json().catch(() => ({}))
           setAnnotations(prev => prev.filter(a => a.id !== annId))
+          // Also drop the pin's activity entry from the thread (server removed it).
+          const removedIds: string[] = Array.isArray(data.removedMessageIds) ? data.removedMessageIds : []
+          if (removedIds.length) setMessages(prev => prev.filter(m => !removedIds.includes(m.id)))
           track('annotation_remove', { caseId })
         } else reportClientError('annotation_delete', caseId, `status ${res.status}`, { status: res.status })
       } catch (e) {
@@ -604,6 +663,25 @@ export default function CaseThread({
       }
     },
     [caseId]
+  )
+
+  // "View on scan" deep-link: open the model an annotation-activity entry points
+  // at (attachment or GLB preview), maximized so its pins are visible.
+  const openAnnotationTarget = useCallback(
+    (meta: Message['meta']) => {
+      if (!meta) return
+      if (meta.attachmentId) {
+        for (const m of messages) {
+          const att = m.attachments.find(a => a.id === meta.attachmentId)
+          if (att) { setMaximized(att); return }
+        }
+      }
+      if (meta.previewKey) {
+        const pv = glbPreviews.find(p => p.id === meta.previewKey)
+        if (pv) setMaximizedPreview(pv)
+      }
+    },
+    [messages, glbPreviews]
   )
 
   // Realtime "typing" indicator for the other participant.
@@ -1299,7 +1377,7 @@ export default function CaseThread({
                       className="h-full w-full"
                       viewKey={`${caseId}:glb:${p.id}`}
                       annotations={annotations.filter(an => an.previewKey === p.id)}
-                      onCreateAnnotation={pt => createPreviewAnnotation(p.id, pt)}
+                      onCreateAnnotation={pt => createPreviewAnnotation(p.id, pt, displayName(p.name))}
                       onDeleteAnnotation={deleteAnnotation}
                       onLoad={source => track('scan_view', { caseId, ext: 'glb', size: p.size, source })}
                       onRotate={() => track('scan_rotate', { caseId, ext: 'glb', size: p.size })}
@@ -1336,6 +1414,47 @@ export default function CaseThread({
             </p>
           )}
           {messages.map(m => {
+            // System "annotation activity" entry — a light, deep-linkable row,
+            // not a chat bubble, so a review burst doesn't flood the thread.
+            if (m.kind === 'annotation') {
+              return (
+                <div key={m.id} className="flex justify-center">
+                  <div className="inline-flex max-w-[92%] items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-500">
+                    <svg className="h-3.5 w-3.5 flex-shrink-0 text-secondary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M12 21s7-5.686 7-11a7 7 0 1 0-14 0c0 5.314 7 11 7 11Z" /><circle cx="12" cy="10" r="2.5" /></svg>
+                    <span className="min-w-0">
+                      <span className="font-medium text-slate-600">{m.authorName}</span>{' '}
+                      {(() => {
+                        const meta = m.meta
+                        const notes = meta?.notes ?? []
+                        const count = meta?.count ?? (notes.length || 1)
+                        const noun = meta?.kind === 'measure' ? 'measurement' : meta?.kind === 'mixed' ? 'annotation' : 'pin'
+                        const label = count === 1 ? noun : `${noun}s`
+                        const model = meta?.modelName ?? 'the scan'
+                        if (notes.length === 0) return <>added {count} {label} to {model}</>
+                        if (notes.length === 1)
+                          return <>added a {noun} to {model}: <span className="italic text-slate-600">“{notes[0]}”</span></>
+                        return (
+                          <>
+                            added {count} {label} to {model}: <span className="italic text-slate-600">“{notes[0]}”</span>{' '}
+                            <span className="text-slate-400">+{notes.length - 1} more</span>
+                          </>
+                        )
+                      })()}
+                    </span>
+                    {(m.meta?.attachmentId || m.meta?.previewKey) && (
+                      <button
+                        type="button"
+                        data-intent="annotation_view_on_scan"
+                        onClick={() => openAnnotationTarget(m.meta)}
+                        className="flex-shrink-0 font-medium text-primary hover:underline"
+                      >
+                        View on scan
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            }
             const mine = m.authorId === currentUserId
             return (
               <div key={m.id} className={`flex gap-3 ${mine ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -1383,7 +1502,7 @@ export default function CaseThread({
                                 className="h-full w-full"
                                 viewKey={`${caseId}:${a.id}`}
                                 annotations={annotations.filter(an => an.attachmentId === a.id)}
-                                onCreateAnnotation={p => createAnnotation(a.id, p)}
+                                onCreateAnnotation={p => createAnnotation(a.id, p, displayName(a.name))}
                                 onDeleteAnnotation={deleteAnnotation}
                                 onLoad={source => track('scan_view', { caseId, ext: a.name.split('.').pop()?.toLowerCase(), size: a.size, source })}
                                 onRotate={() => track('scan_rotate', { caseId, ext: a.name.split('.').pop()?.toLowerCase(), size: a.size })}
@@ -1576,7 +1695,7 @@ export default function CaseThread({
                   className="h-full w-full"
                   viewKey={`${caseId}:${maximized.id}`}
                   annotations={annotations.filter(an => an.attachmentId === maximized.id)}
-                  onCreateAnnotation={p => createAnnotation(maximized.id, p)}
+                  onCreateAnnotation={p => createAnnotation(maximized.id, p, displayName(maximized.name))}
                   onDeleteAnnotation={deleteAnnotation}
                   onLoad={source => track('scan_view', { caseId, ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true, source })}
                   onRotate={() => track('scan_rotate', { caseId, ext: maximized.name.split('.').pop()?.toLowerCase(), size: maximized.size, maximized: true })}
@@ -1593,6 +1712,7 @@ export default function CaseThread({
             </div>
             {/* Chrome in a separate top compositing layer (z-70) so the WebGL canvas can't cover it on mobile */}
             <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] flex touch-none items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+              <span className="pointer-events-none min-w-0 flex-1 truncate text-sm font-medium text-slate-100 drop-shadow">{maximized.name}</span>
               <button
                 type="button"
                 data-intent="viewer_close"
@@ -1602,7 +1722,6 @@ export default function CaseThread({
                 <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
                 Close
               </button>
-              <span className="pointer-events-none min-w-0 flex-1 truncate text-sm font-medium text-slate-100 drop-shadow">{maximized.name}</span>
             </div>
           </>,
           document.body
@@ -1616,7 +1735,7 @@ export default function CaseThread({
                 className="h-full w-full"
                 viewKey={`${caseId}:glb:${maximizedPreview.id}`}
                 annotations={annotations.filter(an => an.previewKey === maximizedPreview.id)}
-                onCreateAnnotation={p => createPreviewAnnotation(maximizedPreview.id, p)}
+                onCreateAnnotation={p => createPreviewAnnotation(maximizedPreview.id, p, displayName(maximizedPreview.name))}
                 onDeleteAnnotation={deleteAnnotation}
                 onLoad={source => track('scan_view', { caseId, ext: 'glb', size: maximizedPreview.size, maximized: true, source })}
                 onRotate={() => track('scan_rotate', { caseId, ext: 'glb', size: maximizedPreview.size, maximized: true })}
@@ -1625,6 +1744,7 @@ export default function CaseThread({
             </div>
             {/* Chrome in a separate top compositing layer (z-70) so the WebGL canvas can't cover it on mobile */}
             <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] flex touch-none items-center gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+              <span className="pointer-events-none min-w-0 flex-1 truncate text-sm font-medium text-slate-100 drop-shadow">{displayName(maximizedPreview.name)}</span>
               <button
                 type="button"
                 data-intent="viewer_close"
@@ -1634,7 +1754,6 @@ export default function CaseThread({
                 <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" /></svg>
                 Close
               </button>
-              <span className="pointer-events-none min-w-0 flex-1 truncate text-sm font-medium text-slate-100 drop-shadow">{displayName(maximizedPreview.name)}</span>
             </div>
           </>,
           document.body

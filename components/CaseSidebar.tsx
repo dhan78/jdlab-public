@@ -169,7 +169,10 @@ export default function CaseSidebar({
     .sort((a, b) => (a.pinnedAt ?? '').localeCompare(b.pinnedAt ?? ''))
   const recentCases = cases.filter(c => !c.pinned).sort(byRecency).slice(0, 10)
   const recent = [...pinnedCases, ...recentCases]
-  const isLoading = provided ? false : loading
+  // Only show the "Loading…" placeholder on the FIRST load (no data yet). On
+  // refetches (e.g. a case open fires `cases:changed`) keep the current list on
+  // screen and swap in fresh data — otherwise the list flickers on every click.
+  const isLoading = provided ? false : (loading && fetched === null)
 
   return (
     <aside className="self-start" aria-label="Recently viewed cases">
