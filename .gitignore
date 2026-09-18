@@ -143,3 +143,4 @@ ingestion/__init__.py
 ingestion/sources/__init__.py
 ingestion/__init__.py
 ingestion/sources/__init__.py
+telemetry-dev.ndjson

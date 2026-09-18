@@ -111,6 +111,7 @@ export default function DemoCaseView({
                     className="h-full w-full"
                     viewKey={`demo:${m.id}`}
                     annotations={m.annotations}
+                    gateTouch
                     readOnly
                   />
                   <button
